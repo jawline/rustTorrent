@@ -46,25 +46,36 @@ fn decode_int(input: &mut &str) -> Result<Entry, NoneError> {
     Ok(Entry::Int(val))
 }
 
-fn decode_list(input: &str) -> Result<Entry, NoneError> {
+fn decode_list(input: &mut &str) -> Result<Entry, NoneError> {
+    let mut r_list = Vec::new();
+
+    loop {
+        if next(*input)? == 'e' {
+            break;
+        }
+
+        r_list.push(decode(input)?);
+    }
+
+    Ok(Entry::List(r_list))
+}
+
+fn decode_dict(input: &mut &str) -> Result<Entry, NoneError> {
     Ok(Entry::Int(0))
 }
 
-fn decode_dict(input: &str) -> Result<Entry, NoneError> {
-    Ok(Entry::Int(0))
+fn decode_str(input: &mut &str) -> Result<Entry, NoneError> {
+    let str_len = decode_num(input, &|i| i == ':');
+    Ok(Entry::Str("Hello".to_string()))
 }
 
-pub fn decode(input: &str) -> Result<Entry, NoneError> {
+pub fn decode(input: &mut &str) -> Result<Entry, NoneError> {
     let id = next(input)?;
     let mut input = &input[1..];
     match id {
         'i' => decode_int(&mut input),
-        'l' => decode_list(input),
-        'd' => decode_dict(input),
-        _ => {
-            //It's a byte string
-            let str_len = decode_num(&mut input, &|i| i == ':');
-            Ok(Entry::Str("Hello".to_string()))
-        }
+        'l' => decode_list(&mut input),
+        'd' => decode_dict(&mut input),
+        _ => decode_str(&mut input)
     }
 }
