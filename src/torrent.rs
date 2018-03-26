@@ -6,6 +6,7 @@ use bencoder::{Entry, decode};
 #[derive(Clone)]
 pub struct Info {
     pub name: String,
+    pub announce: String,
     pub piece_length: usize,
     pub pieces: Vec<Vec<u8>>,
     pub files: Vec<FileInfo>
@@ -45,33 +46,20 @@ pub fn from_file(file_path: &str) -> Result<Entry, &'static str> {
     from_string(&mut c_slice)
 }
 
-pub fn split_pieces(pieces: &[u8]) -> Vec<Vec<u8>> {
-    const SIZE_PIECE: usize = 20;
-
-    let mut result = Vec::new();
-    let num_iterations = pieces.len() / SIZE_PIECE;
-    let mut pieces = pieces.iter();
-
-    for _ in 0..num_iterations {
-        result.push(pieces.take(SIZE_PIECE).map(|x| *x).collect());
-    }
-
-    result
-}
-
 pub fn info(torrent: &Entry) -> Result<Info, &'static str> {
     let info = torrent.field("info")?;
+    let announce = torrent.field("announce")?;
     let name = info.field("name")?;
     let piece_length = info.field("piece length")?;
     let files = info.field("files");
 
-
-    let pieces = 
+    println!("TODO: Extract pieces hash");
 
     let mut extracted = Info {
         name: name.to_string(),
+        announce: announce.to_string(),
         piece_length: piece_length.as_usize()?,
-        pieces: split_pieces(info.field("pieces")?.as_bytes()?),
+        pieces: Vec::new(),
         files: Vec::new()
     }; 
 
