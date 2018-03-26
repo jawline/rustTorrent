@@ -2,3 +2,4 @@
 #[allow(dead_code)]
 
 mod bencoder;
+mod torrent;

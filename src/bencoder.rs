@@ -1,34 +1,58 @@
 use std::collections::HashMap;
 use std::option::NoneError;
 
+#[derive(Debug)]
+#[derive(Clone)]
 pub enum Entry {
-    Str(String),
+    Str(Vec<u8>),
     Int(i64),
     List(Vec<Entry>),
-    Dictionary(HashMap<String, Entry>)
-    
+    Dictionary(HashMap<String, Entry>)    
 }
 
 impl ToString for Entry {
     fn to_string(self: &Entry) -> String {
         match self {
-            &Entry::Str(ref v) => v.to_string(),
+            &Entry::Str(ref v) => String::from_utf8_lossy(&v).to_string(),
             &Entry::Int(ref v) => v.to_string(),
-            &Entry::List(ref v) => v.iter().fold("".to_string(), |l, v| l + &v.to_string()),
+            &Entry::List(ref v) => v.iter().fold("".to_string(), |l, v| l + ", "+ &v.to_string()),
             &Entry::Dictionary(ref _v) => "TODO: Dict to string".to_string()
         }
     }
 }
 
-fn next(input: &str) -> Result<char, NoneError> {
-    Ok(input.chars().next()?)
+impl Entry {
+    pub fn field(self: &Entry, field: &str) -> Result<Entry, &'static str> {
+        if let &Entry::Dictionary(ref d) = self {
+            let info_portion = d.get(field);
+            if info_portion.is_some() {
+                Ok(info_portion.unwrap().clone())
+            } else {
+                Err("No Segment")
+            }
+        } else {
+            Err("Not Dictionary")
+        }
+    }
+
+    pub fn as_usize(self: &Entry) -> Result<usize, &'static str> {
+        if let &Entry::Int(v) = self {
+            Ok(v as usize)
+        } else {
+            Err("bad type")
+        }
+    }
 }
 
-pub fn skip(input: &mut &str, s: usize) {
+fn next(input: &[u8]) -> Result<char, NoneError> {
+    Ok(*input.iter().next()? as char)
+}
+
+pub fn skip(input: &mut &[u8], s: usize) {
     *input = &input[s..];
 }
 
-fn until<T: Fn(char) -> bool>(input: &mut &str, test: &T) -> Result<String, NoneError> {
+fn until<T: Fn(char) -> bool>(input: &mut &[u8], test: &T) -> Result<String, NoneError> {
     let mut res = String::new();
 
     loop {
@@ -45,7 +69,7 @@ fn until<T: Fn(char) -> bool>(input: &mut &str, test: &T) -> Result<String, None
     Ok(res)
 }
 
-fn decode_num<T: Fn(char) -> bool>(input: &mut &str, test: &T) -> Result<i64, NoneError> {
+fn decode_num<T: Fn(char) -> bool>(input: &mut &[u8], test: &T) -> Result<i64, NoneError> {
     let num_string = until(input, test)?;
     let r = num_string.parse::<i64>();
     
@@ -55,13 +79,13 @@ fn decode_num<T: Fn(char) -> bool>(input: &mut &str, test: &T) -> Result<i64, No
     }
 }
 
-fn decode_int(input: &mut &str) -> Result<Entry, NoneError> {
+fn decode_int(input: &mut &[u8]) -> Result<Entry, NoneError> {
     let val = decode_num(input, &|i| i != 'e')?;
     skip(input, 1);
     Ok(Entry::Int(val))
 }
 
-fn decode_list(input: &mut &str) -> Result<Entry, NoneError> {
+fn decode_list(input: &mut &[u8]) -> Result<Entry, NoneError> {
     let mut r_list = Vec::new();
 
     loop {
@@ -77,7 +101,7 @@ fn decode_list(input: &mut &str) -> Result<Entry, NoneError> {
     Ok(Entry::List(r_list))
 }
 
-fn decode_dict(input: &mut &str) -> Result<Entry, NoneError> {
+fn decode_dict(input: &mut &[u8]) -> Result<Entry, NoneError> {
     let mut r_map = HashMap::new();
 
     loop {
@@ -97,15 +121,15 @@ fn decode_dict(input: &mut &str) -> Result<Entry, NoneError> {
     Ok(Entry::Dictionary(r_map))
 }
 
-fn decode_str(input: &mut &str) -> Result<Entry, NoneError> {
+fn decode_str(input: &mut &[u8]) -> Result<Entry, NoneError> {
     let str_len = decode_num(input, &|i| i != ':')? as usize;
     skip(input, 1);
     let res = &input[0..str_len];
     *input = &input[str_len..];
-    Ok(Entry::Str(res.to_string()))
+    Ok(Entry::Str(res.to_vec()))
 }
 
-pub fn decode(input: &mut &str) -> Result<Entry, NoneError> {
+pub fn decode(input: &mut &[u8]) -> Result<Entry, NoneError> {
     let id = next(input)?;
     match id {
         'i' => {
@@ -139,4 +163,10 @@ mod tests {
         let mut input = "i232e";
         assert_eq!(decode(&mut input).unwrap().to_string(), "232");
     }
+
+    #[test]
+    fn list() {
+        let mut input = "li232e5:doggye";
+        assert_eq!(decode(&mut input).unwrap().to_string(), ", 232, doggy");
+    }    
 }
