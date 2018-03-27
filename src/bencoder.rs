@@ -42,6 +42,13 @@ impl Entry {
             Err("bad type")
         }
     }
+
+    pub fn bencode(&self) -> Vec<u8> {
+        match self {
+            &Entry::Str(ref v) => (v.len().to_string() + ":").as_bytes().iter().chain(v).map(|x| *x).collect(),
+            &Entry::Int(ref v) => ("i".to_string() + &v.to_string() + "e").as_bytes().iter().map(|x| *x).collect() 
+        }
+    }
 }
 
 fn next(input: &[u8]) -> Result<char, NoneError> {
