@@ -124,6 +124,8 @@ impl Response for ConnectResp {
 }
 
 const CONNECT_RESP_SIZE: usize = 16;
+const ANNOUNCE_RESP_SIZE: usize = 20;
+const IP_SIZE: usize = 6;
 
 /**
  * Tracker Logic
@@ -140,16 +142,39 @@ fn udp_do_connect(url: &Url, socket: &mut UdpSocket) -> Result<ConnectResp, MsgE
     }
 }
 
-fn udp_do_announce(url: &Url, socket: &mut UdpSocket) -> Result<(), MsgError> {
+fn udp_do_announce(url: &Url, connection: u64, info_hash: &Vec<u8>, socket: &mut UdpSocket) -> Result<(), MsgError> {
 
-    let connect = AnnounceCmd {
+    const NUM_PEERS: usize = 30;
+
+    let announce = AnnounceCmd {
+        connection_id: connection, 
         action: 0,
-        transaction_id: 23131
+        transaction_id: 23131,
+        info_hash: [0; 20].to_vec(),
+        peer_id: [0; 20].to_vec(), //TODO
+        downloaded: 0,
+        left: 0,
+        uploaded: 0,
+        event: 0,
+        ip: 0,
+        key: 0,
+        num_want: NUM_PEERS as u32,
+        port: 19696
     };
 
-    socket.send_to(&connect.serialize(), url).expect("couldn't send data");
-    let mut resp = [0; CONNECT_RESP_SIZE];
-    Ok(()) 
+    println!("Sending Announce");
+
+    socket.send_to(&announce.serialize(), url).expect("couldn't send data");
+    let mut resp = [0; ANNOUNCE_RESP_SIZE + IP_SIZE + (IP_SIZE * NUM_PEERS)];
+    
+    if let Ok(v) = socket.recv(&mut resp) {
+        println!("Received Announce Resp");
+        let resp = &resp[0..v];
+        Ok(())
+    } else {
+        println!("Error Receiving");
+        Err("Could not receive announce resp".to_string())
+    }
 }
 
 pub fn tracker_thread(info: &Info, sender: Sender<TrackerData>, recv: Receiver<TrackerData>) {
@@ -174,6 +199,8 @@ pub fn tracker_thread(info: &Info, sender: Sender<TrackerData>, recv: Receiver<T
         let connection = connection.unwrap().connection_id;
 
         println!("Got Connection ID {}", connection);
+
+        udp_do_announce(&announce, connection, &Vec::new(), &mut socket); 
     }
 }
 
