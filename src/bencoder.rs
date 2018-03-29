@@ -46,7 +46,17 @@ impl Entry {
     pub fn bencode(&self) -> Vec<u8> {
         match self {
             &Entry::Str(ref v) => (v.len().to_string() + ":").as_bytes().iter().chain(v).map(|x| *x).collect(),
-            &Entry::Int(ref v) => ("i".to_string() + &v.to_string() + "e").as_bytes().iter().map(|x| *x).collect() 
+            &Entry::Int(ref v) => ("i".to_string() + &v.to_string() + "e").as_bytes().iter().map(|x| *x).collect(),
+            &Entry::List(ref v) => {
+                let pre = "l".as_bytes();
+                let post = "e".as_bytes();
+                post.to_vec()
+            },
+            &Entry::Dictionary(ref v) => {
+                let pre = "d".as_bytes();
+                let post = "e".as_bytes();
+                post.to_vec()
+            }
         }
     }
 }
