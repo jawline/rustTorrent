@@ -2,7 +2,7 @@ use torrent::Info;
 use url::{Url};
 use std::io::Write;
 use byteorder::{BE, ReadBytesExt, WriteBytesExt};
-use std::net::UdpSocket;
+use std::net::{IpAddr, Ipv4Addr, UdpSocket};
 use std::sync::mpsc::{Sender, Receiver};
 use std::sync::mpsc;
 use std::thread;
@@ -27,6 +27,12 @@ fn cerr<T: Sized, S: Sized + ToString>(r: Result<T, S>) -> Result<T, MsgError> {
 pub enum TrackerData {
     Connected,
     Close
+}
+
+#[derive(Debug)]
+pub struct PeerAddress {
+    pub ip: IpAddr,
+    pub port: u16
 }
 
 /**
@@ -102,6 +108,14 @@ pub struct ConnectResp {
     pub connection_id: u64
 }
 
+#[derive(Debug)]
+pub struct AnnounceResp {
+    pub interval: u32,
+    pub leechers: u32,
+    pub seeders: u32,
+    pub peers: Vec<PeerAddress>
+}
+
 impl Response for ConnectResp {
     fn deserialize(transaction_id: u32, mut data: &[u8]) -> Result<ConnectResp, MsgError> {
         let action = cerr(data.read_u32::<BE>())?;
@@ -120,6 +134,46 @@ impl Response for ConnectResp {
         Ok(ConnectResp {
             connection_id: conid
         })
+    }
+}
+
+impl Response for AnnounceResp {
+    fn deserialize(transaction_id: u32, mut data: &[u8]) -> Result<AnnounceResp, MsgError> {
+        let action = cerr(data.read_u32::<BE>())?;
+        let tran_id = cerr(data.read_u32::<BE>())?;
+
+        if action != 1 {
+            return Err("Announce error (Bad Action)".to_string());
+        }
+
+        if tran_id != transaction_id {
+            return Err("Transaction ID error".to_string());
+        }
+
+        let interval = cerr(data.read_u32::<BE>())?;
+        let leechers = cerr(data.read_u32::<BE>())?;
+        let seeders = cerr(data.read_u32::<BE>())?;
+
+        let num_peers = data.len() / IP_SIZE;
+        println!("TODO: Return peer IPs from announce {}", num_peers);
+
+        let mut peers = Vec::new();
+
+        for i in 0..num_peers {
+            let ip = cerr(data.read_u32::<BE>())?;
+            let port = cerr(data.read_u16::<BE>())?;
+            peers.push(PeerAddress {
+                ip: IpAddr::V4(Ipv4Addr::from(ip)),
+                port: port
+            });
+        }
+
+        Ok(AnnounceResp {
+            interval: interval,
+            leechers: leechers,
+            seeders: seeders,
+            peers: peers
+        }) 
     }
 }
 
@@ -142,15 +196,15 @@ fn udp_do_connect(url: &Url, socket: &mut UdpSocket) -> Result<ConnectResp, MsgE
     }
 }
 
-fn udp_do_announce(url: &Url, connection: u64, info_hash: &[u8], peer_id: &[u8], socket: &mut UdpSocket) -> Result<(), MsgError> {
+fn udp_do_announce(url: &Url, connection: u64, info_hash: &[u8], peer_id: &[u8], socket: &mut UdpSocket) -> Result<AnnounceResp, MsgError> {
 
-    const NUM_PEERS: usize = 0;
+    const NUM_PEERS: usize = 30;
 
     let announce = AnnounceCmd {
         connection_id: connection, 
         transaction_id: 23131,
         info_hash: info_hash.to_vec(),
-        peer_id: peer_id.to_vec(), //TODO
+        peer_id: peer_id.to_vec(),
         downloaded: 0,
         left: 0,
         uploaded: 0,
@@ -168,8 +222,7 @@ fn udp_do_announce(url: &Url, connection: u64, info_hash: &[u8], peer_id: &[u8],
     
     if let Ok(v) = socket.recv(&mut resp) {
         println!("Received Announce Resp");
-        let resp = &resp[0..v];
-        Ok(())
+        Ok(AnnounceResp::deserialize(23131, &resp[0..v])?)
     } else {
         println!("Error Receiving");
         Err("Could not receive announce resp".to_string())
@@ -199,13 +252,17 @@ pub fn tracker_thread(info: &Info, sender: Sender<TrackerData>, recv: Receiver<T
 
         println!("Got Connection ID {}", connection);
 
-        if let Err(v) = udp_do_announce(&announce, connection, &info.info_hash, &info.peer_id, &mut socket) {
+        let announced = udp_do_announce(&announce, connection, &info.info_hash, &info.peer_id, &mut socket); 
+
+        if let Err(v) = announced {
             println!("Announce Error: {}", v);
             sender.send(TrackerData::Close).unwrap();
             return;
         }
 
-        println!("Announced");
+        let announced = announced.unwrap();
+
+        println!("Announced {:?}", announced);
         sender.send(TrackerData::Close).unwrap();
     }
 }
