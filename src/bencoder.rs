@@ -3,7 +3,31 @@ use std::option::NoneError;
 
 #[derive(Debug)]
 #[derive(Clone)]
-pub enum Entry {
+pub struct Entry {
+    pub data: EntryData,
+    pub src: Vec<u8>
+}
+
+impl Entry {
+    pub fn from(data: EntryData, start_input: &[u8], end: usize) -> Entry { 
+        Entry {
+            data: data,
+            src: start_input[0..start_input.len() - end].to_vec()
+        }
+    }
+
+    pub fn field(&self, field: &str) -> Result<Entry, &'static str> {
+        self.data.field(field)
+    }
+
+    pub fn as_usize(&self) -> Result<usize, &'static str> {
+        self.data.as_usize()
+    }
+}
+
+#[derive(Debug)]
+#[derive(Clone)]
+pub enum EntryData {
     Str(Vec<u8>),
     Int(i64),
     List(Vec<Entry>),
@@ -11,19 +35,25 @@ pub enum Entry {
 }
 
 impl ToString for Entry {
-    fn to_string(self: &Entry) -> String {
+    fn to_string(&self) -> String {
+        self.data.to_string()
+    }
+}
+
+impl ToString for EntryData {
+    fn to_string(&self) -> String {
         match self {
-            &Entry::Str(ref v) => String::from_utf8_lossy(&v).to_string(),
-            &Entry::Int(ref v) => v.to_string(),
-            &Entry::List(ref v) => v.iter().fold("".to_string(), |l, v| l + ", "+ &v.to_string()),
-            &Entry::Dictionary(ref _v) => "TODO: Dict to string".to_string()
+            &EntryData::Str(ref v) => String::from_utf8_lossy(&v).to_string(),
+            &EntryData::Int(ref v) => v.to_string(),
+            &EntryData::List(ref v) => v.iter().fold("".to_string(), |l, v| l + ", "+ &v.to_string()),
+            &EntryData::Dictionary(ref _v) => "TODO: Dict to string".to_string()
         }
     }
 }
 
-impl Entry {
-    pub fn field(self: &Entry, field: &str) -> Result<Entry, &'static str> {
-        if let &Entry::Dictionary(ref d) = self {
+impl EntryData {
+    pub fn field(&self, field: &str) -> Result<Entry, &'static str> {
+        if let &EntryData::Dictionary(ref d) = self {
             let info_portion = d.get(field);
             if info_portion.is_some() {
                 Ok(info_portion.unwrap().clone())
@@ -35,8 +65,8 @@ impl Entry {
         }
     }
 
-    pub fn as_usize(self: &Entry) -> Result<usize, &'static str> {
-        if let &Entry::Int(v) = self {
+    pub fn as_usize(&self) -> Result<usize, &'static str> {
+        if let &EntryData::Int(v) = self {
             Ok(v as usize)
         } else {
             Err("bad type")
@@ -46,22 +76,22 @@ impl Entry {
     //TODO: The bencode for List and Dictionary looks horrible, could be an iterator
     pub fn bencode(&self) -> Vec<u8> {
         match self {
-            &Entry::Str(ref v) => (v.len().to_string() + ":").as_bytes().iter().chain(v).map(|x| *x).collect(),
-            &Entry::Int(ref v) => ("i".to_string() + &v.to_string() + "e").as_bytes().iter().map(|x| *x).collect(),
-            &Entry::List(ref v) => {
+            &EntryData::Str(ref v) => (v.len().to_string() + ":").as_bytes().iter().chain(v).map(|x| *x).collect(),
+            &EntryData::Int(ref v) => ("i".to_string() + &v.to_string() + "e").as_bytes().iter().map(|x| *x).collect(),
+            &EntryData::List(ref v) => {
                 let mut res = Vec::new();
                 res.extend("l".as_bytes());
-                v.iter().for_each(|i| res.extend(&i.bencode()));
+                v.iter().for_each(|i| res.extend(&i.data.bencode()));
                 res.extend("e".as_bytes());
                 res                
             },
-            &Entry::Dictionary(ref v) => {
+            &EntryData::Dictionary(ref v) => {
                 let mut res = Vec::new();
                 res.extend("d".as_bytes());
  
                 for (name, data) in v {
-                    res.extend(&Entry::Str(name.as_bytes().to_vec()).bencode());
-                    res.extend(&data.bencode());
+                    res.extend(&EntryData::Str(name.as_bytes().to_vec()).bencode());
+                    res.extend(&data.data.bencode());
                 }
 
                 res.extend("e".as_bytes());
@@ -107,12 +137,20 @@ fn decode_num<T: Fn(char) -> bool>(input: &mut &[u8], test: &T) -> Result<i64, N
 }
 
 fn decode_int(input: &mut &[u8]) -> Result<Entry, NoneError> {
+    let start = input.clone(); 
+    skip(input, 1);
     let val = decode_num(input, &|i| i != 'e')?;
     skip(input, 1);
-    Ok(Entry::Int(val))
+    let end = input.len();
+    Ok(Entry::from(EntryData::Int(val), start, end))
 }
 
 fn decode_list(input: &mut &[u8]) -> Result<Entry, NoneError> {
+ 
+    let start = input.clone();
+
+    skip(input, 1);
+
     let mut r_list = Vec::new();
 
     loop {
@@ -125,10 +163,16 @@ fn decode_list(input: &mut &[u8]) -> Result<Entry, NoneError> {
 
     skip(input, 1);
 
-    Ok(Entry::List(r_list))
+    let end = input.len();
+
+    Ok(Entry::from(EntryData::List(r_list), start, end))
 }
 
 fn decode_dict(input: &mut &[u8]) -> Result<Entry, NoneError> {
+    let start = input.clone();
+ 
+    skip(input, 1);
+
     let mut r_map = HashMap::new();
 
     loop {
@@ -145,30 +189,33 @@ fn decode_dict(input: &mut &[u8]) -> Result<Entry, NoneError> {
 
     skip(input, 1);
 
-    Ok(Entry::Dictionary(r_map))
+    let end = input.len();
+
+    Ok(Entry::from(EntryData::Dictionary(r_map), start, end))
 }
 
 fn decode_str(input: &mut &[u8]) -> Result<Entry, NoneError> {
+    let start = input.clone();
     let str_len = decode_num(input, &|i| i != ':')? as usize;
     skip(input, 1);
     let res = &input[0..str_len];
     *input = &input[str_len..];
-    Ok(Entry::Str(res.to_vec()))
+
+    let end = input.len();
+
+    Ok(Entry::from(EntryData::Str(res.to_vec()), start, end))
 }
 
 pub fn decode(input: &mut &[u8]) -> Result<Entry, NoneError> {
     let id = next(input)?;
     match id {
         'i' => {
-            skip(input, 1);
             decode_int(input)
         },
         'l' => {
-            skip(input, 1);
             decode_list(input)
         },
         'd' => {
-            skip(input, 1);
             decode_dict(input)
         },
         _ => decode_str(input)

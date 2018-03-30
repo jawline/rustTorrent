@@ -1,7 +1,7 @@
 use std::fs::File;
 use std::io::Read;
 use sha1;
-use bencoder::{Entry, decode};
+use bencoder::{Entry, EntryData, decode};
 use peer_id::gen_peer_id;
 
 #[derive(Debug)]
@@ -57,10 +57,8 @@ pub fn prepare(torrent: &Entry) -> Result<Info, &'static str> {
     let piece_length = info.field("piece length")?;
     let files = info.field("files");
 
-    println!("TODO: Extract pieces hash");
-
     let mut info_digest = sha1::Sha1::new();
-    info_digest.update(&info.bencode());
+    info_digest.update(&info.src);
 
     let mut extracted = Info {
         name: name.to_string(),
@@ -75,7 +73,7 @@ pub fn prepare(torrent: &Entry) -> Result<Info, &'static str> {
     if files.is_ok() {
         let files = files.unwrap();
         
-        if let Entry::List(files) = files {
+        if let EntryData::List(files) = files.data {
             for file in files {
                 let path = file.field("path")?;
                 let length = file.field("length")?;
