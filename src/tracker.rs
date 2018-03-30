@@ -1,5 +1,6 @@
 use torrent::Info;
 use url::{Url};
+use std::io::Write;
 use byteorder::{BE, ReadBytesExt, WriteBytesExt};
 use std::net::UdpSocket;
 use std::sync::mpsc::{Sender, Receiver};
@@ -43,7 +44,6 @@ pub struct ConnectCmd {
 
 pub struct AnnounceCmd {
     pub connection_id: u64,
-    pub action: u32,
     pub transaction_id: u32,
     pub info_hash: Vec<u8>,
     pub peer_id: Vec<u8>,
@@ -71,10 +71,11 @@ impl Command for AnnounceCmd {
     fn serialize(&self) -> Vec<u8> {
         let mut res = vec![];
         res.write_u64::<BE>(self.connection_id).unwrap();
-        res.write_u32::<BE>(self.action).unwrap();
+        res.write_u32::<BE>(1).unwrap();
         res.write_u32::<BE>(self.transaction_id).unwrap();
-        
-        //TODO: Info and peer ID strings
+
+        res.write(&self.info_hash);
+        res.write(&self.peer_id);
 
         res.write_u64::<BE>(self.downloaded).unwrap();
         res.write_u64::<BE>(self.left).unwrap();
@@ -147,7 +148,6 @@ fn udp_do_announce(url: &Url, connection: u64, info_hash: &[u8], peer_id: &[u8],
 
     let announce = AnnounceCmd {
         connection_id: connection, 
-        action: 0,
         transaction_id: 23131,
         info_hash: info_hash.to_vec(),
         peer_id: peer_id.to_vec(), //TODO
@@ -204,7 +204,9 @@ pub fn tracker_thread(info: &Info, sender: Sender<TrackerData>, recv: Receiver<T
             sender.send(TrackerData::Close).unwrap();
             return;
         }
+
         println!("Announced");
+        sender.send(TrackerData::Close).unwrap();
     }
 }
 
