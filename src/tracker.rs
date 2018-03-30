@@ -2,7 +2,6 @@ use torrent::Info;
 use url::{Url};
 use byteorder::{BE, ReadBytesExt, WriteBytesExt};
 use std::net::UdpSocket;
-use std::io::Error;
 use std::sync::mpsc::{Sender, Receiver};
 use std::sync::mpsc;
 use std::thread;
@@ -136,22 +135,22 @@ fn udp_do_connect(url: &Url, socket: &mut UdpSocket) -> Result<ConnectResp, MsgE
     socket.send_to(&connect.serialize(), url).expect("couldn't send data");
     let mut resp = [0; CONNECT_RESP_SIZE];
     if let Ok(v) = socket.recv(&mut resp) {
-        ConnectResp::deserialize(23131, &resp)
+        ConnectResp::deserialize(23131, &resp[0..v])
     } else {
         Err("Could not receive".to_string())
     }
 }
 
-fn udp_do_announce(url: &Url, connection: u64, info_hash: &Vec<u8>, socket: &mut UdpSocket) -> Result<(), MsgError> {
+fn udp_do_announce(url: &Url, connection: u64, info_hash: &[u8], peer_id: &[u8], socket: &mut UdpSocket) -> Result<(), MsgError> {
 
-    const NUM_PEERS: usize = 30;
+    const NUM_PEERS: usize = 0;
 
     let announce = AnnounceCmd {
         connection_id: connection, 
         action: 0,
         transaction_id: 23131,
-        info_hash: [0; 20].to_vec(),
-        peer_id: [0; 20].to_vec(), //TODO
+        info_hash: info_hash.to_vec(),
+        peer_id: peer_id.to_vec(), //TODO
         downloaded: 0,
         left: 0,
         uploaded: 0,
@@ -162,7 +161,7 @@ fn udp_do_announce(url: &Url, connection: u64, info_hash: &Vec<u8>, socket: &mut
         port: 19696
     };
 
-    println!("Sending Announce");
+    println!("Sending Announce for hash {:?} (len {}) peer {:?} (len {})", info_hash, info_hash.len(), announce.peer_id, announce.peer_id.len());
 
     socket.send_to(&announce.serialize(), url).expect("couldn't send data");
     let mut resp = [0; ANNOUNCE_RESP_SIZE + IP_SIZE + (IP_SIZE * NUM_PEERS)];
@@ -192,7 +191,7 @@ pub fn tracker_thread(info: &Info, sender: Sender<TrackerData>, recv: Receiver<T
         let connection = udp_do_connect(&announce, &mut socket);
 
         if connection.is_err() {
-            sender.send(TrackerData::Close);
+            sender.send(TrackerData::Close).unwrap();
             return;
         }
 
@@ -200,7 +199,12 @@ pub fn tracker_thread(info: &Info, sender: Sender<TrackerData>, recv: Receiver<T
 
         println!("Got Connection ID {}", connection);
 
-        udp_do_announce(&announce, connection, &Vec::new(), &mut socket); 
+        if let Err(v) = udp_do_announce(&announce, connection, &info.info_hash, &info.peer_id, &mut socket) {
+            println!("Announce Error: {}", v);
+            sender.send(TrackerData::Close).unwrap();
+            return;
+        }
+        println!("Announced");
     }
 }
 

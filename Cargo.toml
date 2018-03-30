@@ -6,3 +6,5 @@ authors = ["Blake Loring <blake@parsed.uk>"]
 [dependencies]
 "byteorder"="1.2.1"
 "url"="*"
+"rand"="0.4.2"
+"sha1"="0.6.0"
