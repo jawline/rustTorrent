@@ -80,8 +80,8 @@ impl Command for AnnounceCmd {
         res.write_u32::<BE>(1).unwrap();
         res.write_u32::<BE>(self.transaction_id).unwrap();
 
-        res.write(&self.info_hash);
-        res.write(&self.peer_id);
+        res.write(&self.info_hash).unwrap();
+        res.write(&self.peer_id).unwrap();
 
         res.write_u64::<BE>(self.downloaded).unwrap();
         res.write_u64::<BE>(self.left).unwrap();
@@ -159,7 +159,7 @@ impl Response for AnnounceResp {
 
         let mut peers = Vec::new();
 
-        for i in 0..num_peers {
+        for _ in 0..num_peers {
             let ip = cerr(data.read_u32::<BE>())?;
             let port = cerr(data.read_u16::<BE>())?;
             peers.push(PeerAddress {

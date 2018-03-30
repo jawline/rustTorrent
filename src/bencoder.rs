@@ -1,6 +1,10 @@
 use std::collections::HashMap;
 use std::option::NoneError;
 
+/**
+ * Entry Implementation, contains a decoded Bencode entry & its source string
+ */
+
 #[derive(Debug)]
 #[derive(Clone)]
 pub struct Entry {
@@ -9,6 +13,7 @@ pub struct Entry {
 }
 
 impl Entry {
+
     pub fn from(data: EntryData, start_input: &[u8], end: usize) -> Entry { 
         Entry {
             data: data,
@@ -25,6 +30,16 @@ impl Entry {
     }
 }
 
+impl ToString for Entry {
+    fn to_string(&self) -> String {
+        self.data.to_string()
+    }
+}
+
+/**
+ * Enum represents the actual data of a bencoded entry
+ */
+
 #[derive(Debug)]
 #[derive(Clone)]
 pub enum EntryData {
@@ -32,12 +47,6 @@ pub enum EntryData {
     Int(i64),
     List(Vec<Entry>),
     Dictionary(HashMap<String, Entry>)    
-}
-
-impl ToString for Entry {
-    fn to_string(&self) -> String {
-        self.data.to_string()
-    }
 }
 
 impl ToString for EntryData {
@@ -72,34 +81,11 @@ impl EntryData {
             Err("bad type")
         }
     }
-
-    //TODO: The bencode for List and Dictionary looks horrible, could be an iterator
-    pub fn bencode(&self) -> Vec<u8> {
-        match self {
-            &EntryData::Str(ref v) => (v.len().to_string() + ":").as_bytes().iter().chain(v).map(|x| *x).collect(),
-            &EntryData::Int(ref v) => ("i".to_string() + &v.to_string() + "e").as_bytes().iter().map(|x| *x).collect(),
-            &EntryData::List(ref v) => {
-                let mut res = Vec::new();
-                res.extend("l".as_bytes());
-                v.iter().for_each(|i| res.extend(&i.data.bencode()));
-                res.extend("e".as_bytes());
-                res                
-            },
-            &EntryData::Dictionary(ref v) => {
-                let mut res = Vec::new();
-                res.extend("d".as_bytes());
- 
-                for (name, data) in v {
-                    res.extend(&EntryData::Str(name.as_bytes().to_vec()).bencode());
-                    res.extend(&data.data.bencode());
-                }
-
-                res.extend("e".as_bytes());
-                res
-            }
-        }
-    }
 }
+
+/**
+ * What follows is the implementation of a simple bencoded parser
+ */
 
 fn next(input: &[u8]) -> Result<char, NoneError> {
     Ok(*input.iter().next()? as char)

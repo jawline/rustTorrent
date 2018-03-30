@@ -7,6 +7,7 @@ extern crate byteorder;
 extern crate rand;
 
 mod bencoder;
+mod bencoder_recode;
 mod torrent;
 mod tracker;
 mod download;
