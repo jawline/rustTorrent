@@ -22,24 +22,32 @@ pub fn download(filename: &str) -> (Sender<DownloadState>, Receiver<DownloadStat
 
         println!("Loading {}", info.name);
 
-        let (tracker_send, tracker_recv) = connect(&info);
+        let (tracker_send, tracker_recv) = connect(&info, 6898, 11993);
 
         loop {
 
             let ctrl_data = thread_recv.try_recv();
             
             if let Ok(DownloadState::Close) = ctrl_data {
-                tracker_send.send(TrackerState::Close);
+                tracker_send.send(TrackerState::Close("Requested".to_string()));
             }
 
             let tracker_data = tracker_recv.try_recv();
 
-            if let Ok(TrackerState::Close) = tracker_data {
-                println!("Tracker Closed");
-                thread_send.send(DownloadState::Close);
-                break;
+            match tracker_data {
+                Ok(TrackerState::Close(v)) => {
+                    println!("Closed because {}", v);
+                    thread_send.send(DownloadState::Close);
+                    break; 
+                },
+                Ok(TrackerState::Connected(cid)) => {
+                    println!("Connected to the tracker with connection id {}", cid);
+                },
+                Ok(TrackerState::Announced(peers)) => {
+                    println!("Acquired peers {:?}", peers);
+                },
+                Err(_) => {}
             }
-
         } 
     });
 

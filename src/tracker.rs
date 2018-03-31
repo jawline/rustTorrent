@@ -25,11 +25,13 @@ fn cerr<T: Sized, S: Sized + ToString>(r: Result<T, S>) -> Result<T, MsgError> {
  */
 
 pub enum TrackerState {
-    Connected,
-    Close
+    Connected(u64),
+    Announced(Vec<PeerAddress>),
+    Close(String)
 }
 
 #[derive(Debug)]
+#[derive(Clone)]
 pub struct PeerAddress {
     pub ip: IpAddr,
     pub port: u16
@@ -104,6 +106,7 @@ trait Response {
 }
 
 #[derive(Debug)]
+#[derive(Clone)]
 pub struct ConnectResp {
     pub connection_id: u64
 }
@@ -155,8 +158,6 @@ impl Response for AnnounceResp {
         let seeders = cerr(data.read_u32::<BE>())?;
 
         let num_peers = data.len() / IP_SIZE;
-        println!("TODO: Return peer IPs from announce {}", num_peers);
-
         let mut peers = Vec::new();
 
         for _ in 0..num_peers {
@@ -196,7 +197,7 @@ fn udp_do_connect(url: &Url, socket: &mut UdpSocket) -> Result<ConnectResp, MsgE
     }
 }
 
-fn udp_do_announce(url: &Url, connection: u64, info_hash: &[u8], peer_id: &[u8], socket: &mut UdpSocket) -> Result<AnnounceResp, MsgError> {
+fn udp_do_announce(url: &Url, connection: u64, peer_port: u16, info_hash: &[u8], peer_id: &[u8], socket: &mut UdpSocket) -> Result<AnnounceResp, MsgError> {
 
     const NUM_PEERS: usize = 30;
 
@@ -212,7 +213,7 @@ fn udp_do_announce(url: &Url, connection: u64, info_hash: &[u8], peer_id: &[u8],
         ip: 0,
         key: 0,
         num_want: NUM_PEERS as u32,
-        port: 19696
+        port: peer_port as u16
     };
 
     println!("Sending Announce for hash {:?} (len {}) peer {:?} (len {})", info_hash, info_hash.len(), announce.peer_id, announce.peer_id.len());
@@ -221,19 +222,17 @@ fn udp_do_announce(url: &Url, connection: u64, info_hash: &[u8], peer_id: &[u8],
     let mut resp = [0; ANNOUNCE_RESP_SIZE + IP_SIZE + (IP_SIZE * NUM_PEERS)];
     
     if let Ok(v) = socket.recv(&mut resp) {
-        println!("Received Announce Resp");
         Ok(AnnounceResp::deserialize(23131, &resp[0..v])?)
     } else {
-        println!("Error Receiving");
         Err("Could not receive announce resp".to_string())
     }
 }
 
-pub fn tracker_thread(info: &Info, sender: Sender<TrackerState>, recv: Receiver<TrackerState>) {
+pub fn tracker_thread(info: &Info, peer_port: u16, tracker_port: u16, sender: Sender<TrackerState>, recv: Receiver<TrackerState>) {
     if info.announce.starts_with("udp://") {
 
         let announce = Url::parse(&info.announce.to_string());
-        let udp_addr = "0.0.0.0:19696";
+        let udp_addr = "0.0.0.0:".to_string() + &tracker_port.to_string();
 
         let announce = announce.unwrap();
 
@@ -243,38 +242,37 @@ pub fn tracker_thread(info: &Info, sender: Sender<TrackerState>, recv: Receiver<
 
         let connection = udp_do_connect(&announce, &mut socket);
 
-        if connection.is_err() {
-            sender.send(TrackerState::Close).unwrap();
+        if let Err(v) = connection {
+            sender.send(TrackerState::Close(v.clone())).unwrap();
             return;
         }
 
         let connection = connection.unwrap().connection_id;
+        sender.send(TrackerState::Connected(connection));
 
-        println!("Got Connection ID {}", connection);
-
-        let announced = udp_do_announce(&announce, connection, &info.info_hash, &info.peer_id, &mut socket); 
+        let announced = udp_do_announce(&announce, connection, peer_port, &info.info_hash, &info.peer_id, &mut socket); 
 
         if let Err(v) = announced {
-            println!("Announce Error: {}", v);
-            sender.send(TrackerState::Close).unwrap();
+            sender.send(TrackerState::Close(v.clone())).unwrap();
             return;
         }
 
         let announced = announced.unwrap();
 
-        println!("Announced {:?}", announced);
-        sender.send(TrackerState::Close).unwrap();
+        sender.send(TrackerState::Announced(announced.peers.clone()));
+
+        sender.send(TrackerState::Close("Finished".to_string())).unwrap();
     }
 }
 
-pub fn connect(info: &Info) -> (Sender<TrackerState>, Receiver<TrackerState>) {
+pub fn connect(info: &Info, peer_port: u16, tracker_port: u16) -> (Sender<TrackerState>, Receiver<TrackerState>) {
     let info = info.clone();
 
     let (thread_send, main_recv): (Sender<TrackerState>, Receiver<TrackerState>) = mpsc::channel();
     let (main_send, thread_recv): (Sender<TrackerState>, Receiver<TrackerState>) = mpsc::channel();
 
     thread::spawn(move || {
-        tracker_thread(&info, thread_send, thread_recv);
+        tracker_thread(&info, peer_port, tracker_port, thread_send, thread_recv);
     });
    
     (main_send, main_recv)
