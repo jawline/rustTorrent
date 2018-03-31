@@ -22,14 +22,24 @@ pub fn download(filename: &str) -> (Sender<DownloadState>, Receiver<DownloadStat
 
         println!("Loading {}", info.name);
 
-        let (ctrl, data) = connect(&info);
+        let (tracker_send, tracker_recv) = connect(&info);
 
         loop {
-            let tracker_data = data.try_recv();
+
+            let ctrl_data = thread_recv.try_recv();
+            
+            if let Ok(DownloadState::Close) = ctrl_data {
+                tracker_send.send(TrackerData::Close);
+            }
+
+            let tracker_data = tracker_recv.try_recv();
+
             if let Ok(TrackerData::Close) = tracker_data {
                 println!("Tracker Closed");
+                thread_send.send(DownloadState::Close);
                 break;
             }
+
         } 
     });
 

@@ -16,5 +16,12 @@ mod peer_id;
 use std::env;
 
 pub fn main() {
-    download::download(&env::args().nth(1).unwrap());    
+    let (master_send, master_recv) = download::download(&env::args().nth(1).unwrap());
+
+    loop {
+        let master_data = master_recv.try_recv();
+        if let Ok(download::DownloadState::Close) = master_data {
+            break;
+        }
+    }    
 }
