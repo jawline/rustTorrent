@@ -14,10 +14,10 @@ pub struct Entry {
 
 impl Entry {
 
-    pub fn from(data: EntryData, start_input: &[u8], end: usize) -> Entry { 
+    pub fn from(data: EntryData, input: &[u8], end: usize) -> Entry { 
         Entry {
             data: data,
-            src: start_input[0..start_input.len() - end].to_vec()
+            src: input[0..input.len() - end].to_vec()
         }
     }
 
