@@ -24,7 +24,7 @@ fn cerr<T: Sized, S: Sized + ToString>(r: Result<T, S>) -> Result<T, MsgError> {
  * Main / thread sync
  */
 
-pub enum TrackerData {
+pub enum TrackerState {
     Connected,
     Close
 }
@@ -229,7 +229,7 @@ fn udp_do_announce(url: &Url, connection: u64, info_hash: &[u8], peer_id: &[u8],
     }
 }
 
-pub fn tracker_thread(info: &Info, sender: Sender<TrackerData>, recv: Receiver<TrackerData>) {
+pub fn tracker_thread(info: &Info, sender: Sender<TrackerState>, recv: Receiver<TrackerState>) {
     if info.announce.starts_with("udp://") {
 
         let announce = Url::parse(&info.announce.to_string());
@@ -244,7 +244,7 @@ pub fn tracker_thread(info: &Info, sender: Sender<TrackerData>, recv: Receiver<T
         let connection = udp_do_connect(&announce, &mut socket);
 
         if connection.is_err() {
-            sender.send(TrackerData::Close).unwrap();
+            sender.send(TrackerState::Close).unwrap();
             return;
         }
 
@@ -256,22 +256,22 @@ pub fn tracker_thread(info: &Info, sender: Sender<TrackerData>, recv: Receiver<T
 
         if let Err(v) = announced {
             println!("Announce Error: {}", v);
-            sender.send(TrackerData::Close).unwrap();
+            sender.send(TrackerState::Close).unwrap();
             return;
         }
 
         let announced = announced.unwrap();
 
         println!("Announced {:?}", announced);
-        sender.send(TrackerData::Close).unwrap();
+        sender.send(TrackerState::Close).unwrap();
     }
 }
 
-pub fn connect(info: &Info) -> (Sender<TrackerData>, Receiver<TrackerData>) {
+pub fn connect(info: &Info) -> (Sender<TrackerState>, Receiver<TrackerState>) {
     let info = info.clone();
 
-    let (thread_send, main_recv): (Sender<TrackerData>, Receiver<TrackerData>) = mpsc::channel();
-    let (main_send, thread_recv): (Sender<TrackerData>, Receiver<TrackerData>) = mpsc::channel();
+    let (thread_send, main_recv): (Sender<TrackerState>, Receiver<TrackerState>) = mpsc::channel();
+    let (main_send, thread_recv): (Sender<TrackerState>, Receiver<TrackerState>) = mpsc::channel();
 
     thread::spawn(move || {
         tracker_thread(&info, thread_send, thread_recv);

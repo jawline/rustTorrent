@@ -1,5 +1,5 @@
 use torrent::{from_file, prepare};
-use tracker::{TrackerData, connect};
+use tracker::{TrackerState, connect};
 use std::sync::mpsc::{Sender, Receiver};
 use std::sync::mpsc;
 use std::thread;
@@ -29,12 +29,12 @@ pub fn download(filename: &str) -> (Sender<DownloadState>, Receiver<DownloadStat
             let ctrl_data = thread_recv.try_recv();
             
             if let Ok(DownloadState::Close) = ctrl_data {
-                tracker_send.send(TrackerData::Close);
+                tracker_send.send(TrackerState::Close);
             }
 
             let tracker_data = tracker_recv.try_recv();
 
-            if let Ok(TrackerData::Close) = tracker_data {
+            if let Ok(TrackerState::Close) = tracker_data {
                 println!("Tracker Closed");
                 thread_send.send(DownloadState::Close);
                 break;
