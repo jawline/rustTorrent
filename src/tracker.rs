@@ -216,8 +216,6 @@ fn udp_do_announce(url: &Url, connection: u64, peer_port: u16, info_hash: &[u8],
         port: peer_port as u16
     };
 
-    println!("Sending Announce for hash {:?} (len {}) peer {:?} (len {})", info_hash, info_hash.len(), announce.peer_id, announce.peer_id.len());
-
     socket.send_to(&announce.serialize(), url).expect("couldn't send data");
     let mut resp = [0; ANNOUNCE_RESP_SIZE + IP_SIZE + (IP_SIZE * NUM_PEERS)];
     

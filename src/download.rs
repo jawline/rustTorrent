@@ -4,6 +4,7 @@ use std::sync::mpsc::{Sender, Receiver};
 use std::sync::mpsc;
 use std::thread;
 use std::net::TcpListener;
+use peer_client::peer_client;
 use torrent_data::TorrentData;
 
 pub enum DownloadState {
@@ -39,6 +40,8 @@ pub fn download(filename: &str) -> (Sender<DownloadState>, Receiver<DownloadStat
 
         let (tracker_send, tracker_recv) = connect(&info, peer_port, tracker_port);
 
+        //let mut active_peers = Vec::new();
+
         loop {
 
             let ctrl_data = thread_recv.try_recv();
@@ -59,7 +62,10 @@ pub fn download(filename: &str) -> (Sender<DownloadState>, Receiver<DownloadStat
                     println!("Connected to the tracker with connection id {}", cid);
                 },
                 Ok(TrackerState::Announced(peers)) => {
-                    println!("Acquired peers {:?}", peers);
+                    //println!("Acquired peers {:?}", peers);
+                    for peer in &peers {
+                        peer_client(&info, peer);
+                    }
                 },
                 Err(_) => {}
             }
