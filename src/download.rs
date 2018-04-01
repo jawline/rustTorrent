@@ -27,10 +27,10 @@ pub fn download(filename: &str) -> (Sender<DownloadState>, Receiver<DownloadStat
         
         println!("Loading {}", info.name);
 
-        let torrent_data = TorrentData::allocate(&info.name, info.pieces.clone(), info.piece_length); 
+        let torrent_data = TorrentData::allocate(&("/home/blake/".to_string() + &info.name), info.pieces.clone(), info.piece_length); 
 
-        if torrent_data.is_err() {
-            println!("Bad Allocate");
+        if let Err(v) = torrent_data { 
+            println!("Bad Allocate {}", v);
             thread_send.send(DownloadState::Close);
             return;
         }
