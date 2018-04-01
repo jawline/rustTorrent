@@ -4,6 +4,7 @@ use std::sync::mpsc::{Sender, Receiver};
 use std::sync::mpsc;
 use std::thread;
 use std::net::TcpListener;
+use torrent_data::TorrentData;
 
 pub enum DownloadState {
     Close
@@ -25,6 +26,16 @@ pub fn download(filename: &str) -> (Sender<DownloadState>, Receiver<DownloadStat
         let info = prepare(&root).unwrap();
         
         println!("Loading {}", info.name);
+
+        let torrent_data = TorrentData::allocate(&info.name, info.pieces.clone(), info.piece_length); 
+
+        if torrent_data.is_err() {
+            println!("Bad Allocate");
+            thread_send.send(DownloadState::Close);
+            return;
+        }
+
+        let torrent_data = torrent_data.unwrap();
 
         let (tracker_send, tracker_recv) = connect(&info, peer_port, tracker_port);
 
