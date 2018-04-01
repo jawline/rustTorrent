@@ -5,7 +5,7 @@ use byteorder::{BE, ReadBytesExt, WriteBytesExt};
 use std::net::{IpAddr, Ipv4Addr, UdpSocket};
 use std::sync::mpsc::{Sender, Receiver};
 use std::sync::mpsc;
-use std::thread;
+use std::{thread, time};
 
 /**
  * Error Handlers
@@ -250,18 +250,20 @@ pub fn tracker_thread(info: &Info, peer_port: u16, tracker_port: u16, sender: Se
         let connection = connection.unwrap().connection_id;
         sender.send(TrackerState::Connected(connection));
 
-        let announced = udp_do_announce(&announce, connection, peer_port, &info.info_hash, &info.peer_id, &mut socket); 
+        loop {
+            let announced = udp_do_announce(&announce, connection, peer_port, &info.info_hash, &info.peer_id, &mut socket); 
 
-        if let Err(v) = announced {
-            sender.send(TrackerState::Close(v.clone())).unwrap();
-            return;
+            if let Err(v) = announced {
+                sender.send(TrackerState::Close(v.clone())).unwrap();
+                return;
+            }
+
+            let announced = announced.unwrap();
+
+            sender.send(TrackerState::Announced(announced.peers.clone()));
+            
+            thread::sleep(time::Duration::from_millis(announced.interval as u64));
         }
-
-        let announced = announced.unwrap();
-
-        sender.send(TrackerState::Announced(announced.peers.clone()));
-
-        sender.send(TrackerState::Close("Finished".to_string())).unwrap();
     }
 }
 

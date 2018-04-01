@@ -3,6 +3,7 @@ use tracker::{TrackerState, connect};
 use std::sync::mpsc::{Sender, Receiver};
 use std::sync::mpsc;
 use std::thread;
+use std::net::TcpListener;
 
 pub enum DownloadState {
     Close
@@ -15,14 +16,17 @@ pub fn download(filename: &str) -> (Sender<DownloadState>, Receiver<DownloadStat
     let (thread_send, main_recv): (Sender<DownloadState>, Receiver<DownloadState>) = mpsc::channel();
     let (main_send, thread_recv): (Sender<DownloadState>, Receiver<DownloadState>) = mpsc::channel();
 
-
     thread::spawn(move || {
+
+        let peer_port = 6898;
+        let tracker_port = 11993;
+
         let root = from_file(&filename).unwrap();
         let info = prepare(&root).unwrap();
-
+        
         println!("Loading {}", info.name);
 
-        let (tracker_send, tracker_recv) = connect(&info, 6898, 11993);
+        let (tracker_send, tracker_recv) = connect(&info, peer_port, tracker_port);
 
         loop {
 
@@ -48,6 +52,7 @@ pub fn download(filename: &str) -> (Sender<DownloadState>, Receiver<DownloadStat
                 },
                 Err(_) => {}
             }
+
         } 
     });
 
