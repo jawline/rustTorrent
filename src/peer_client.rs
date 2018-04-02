@@ -40,7 +40,9 @@ pub fn peer_client(torrent: &Info, peer: &PeerAddress) {
             peer_id: torrent.peer_id.clone()
         };
 
-        client.write(&handshake.serialize()).unwrap();
+        if let Err(_) = client.write(&handshake.serialize()) {
+            println!("Error sending BT peer-wire handshake");
+        }
 
         println!("Send BitTorrent wire handshake");
     });
