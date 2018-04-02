@@ -40,7 +40,7 @@ pub fn download(filename: &str) -> (Sender<DownloadState>, Receiver<DownloadStat
 
         let (tracker_send, tracker_recv) = connect(&info, peer_port, tracker_port);
 
-        //let mut active_peers = Vec::new();
+        let mut active_peers = Vec::new();
 
         loop {
 
@@ -64,7 +64,7 @@ pub fn download(filename: &str) -> (Sender<DownloadState>, Receiver<DownloadStat
                 Ok(TrackerState::Announced(peers)) => {
                     //println!("Acquired peers {:?}", peers);
                     for peer in &peers {
-                        peer_client(&info, peer);
+                        active_peers.push(peer_client(&info, peer));
                     }
                 },
                 Err(_) => {}
