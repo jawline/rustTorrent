@@ -8,3 +8,4 @@ authors = ["Blake Loring <blake@parsed.uk>"]
 "url"="*"
 "rand"="0.4.2"
 "sha1"="0.6.0"
+"reqwest"="0.8.5"
