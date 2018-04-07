@@ -228,47 +228,56 @@ fn udp_do_announce(url: &Url, connection: u64, peer_port: u16, info_hash: &[u8],
     }
 }
 
-pub fn tracker_thread(info: &Info, peer_port: u16, tracker_port: u16, sender: Sender<TrackerState>, recv: Receiver<TrackerState>) {
-    if info.announce.starts_with("udp://") {
+pub fn udp_tracker(info: &Info, peer_port: u16, tracker_port: u16, sender: Sender<TrackerState>, recv: Receiver<TrackerState>) {
+    let announce = Url::parse(&info.announce.to_string());
+    let udp_addr = "0.0.0.0:".to_string() + &tracker_port.to_string();
 
-        let announce = Url::parse(&info.announce.to_string());
-        let udp_addr = "0.0.0.0:".to_string() + &tracker_port.to_string();
+    let announce = announce.unwrap();
 
-        let announce = announce.unwrap();
+    println!("UDP Tracker {} to {}", udp_addr, announce);
 
-        println!("UDP Tracker {} to {}", udp_addr, announce);
+    let mut socket = UdpSocket::bind(udp_addr).expect("couldn't bind to address");
 
-        let mut socket = UdpSocket::bind(udp_addr).expect("couldn't bind to address");
+    let connection = udp_do_connect(&announce, &mut socket);
 
-        let connection = udp_do_connect(&announce, &mut socket);
+    if let Err(v) = connection {
+        sender.send(TrackerState::Close(v.clone())).unwrap();
+        return;
+    }
 
-        if let Err(v) = connection {
+    let connection = connection.unwrap().connection_id;
+    sender.send(TrackerState::Connected(connection));
+
+    loop {
+        let announced = udp_do_announce(&announce, connection, peer_port, &info.info_hash, &info.peer_id, &mut socket); 
+
+        if let Err(v) = announced {
             sender.send(TrackerState::Close(v.clone())).unwrap();
             return;
         }
 
-        let connection = connection.unwrap().connection_id;
-        sender.send(TrackerState::Connected(connection));
+        let announced = announced.unwrap();
 
-        loop {
-            let announced = udp_do_announce(&announce, connection, peer_port, &info.info_hash, &info.peer_id, &mut socket); 
+        sender.send(TrackerState::Announced(announced.peers.clone()));
+        
+        thread::sleep(time::Duration::from_millis(announced.interval as u64));
+    }
+}
 
-            if let Err(v) = announced {
-                sender.send(TrackerState::Close(v.clone())).unwrap();
-                return;
-            }
-
-            let announced = announced.unwrap();
-
-            sender.send(TrackerState::Announced(announced.peers.clone()));
-            
-            thread::sleep(time::Duration::from_millis(announced.interval as u64));
-        }
+pub fn tracker_thread(info: &Info, peer_port: u16, tracker_port: u16, send: Sender<TrackerState>, recv: Receiver<TrackerState>) {
+    if info.announce.starts_with("udp://") {
+       udp_tracker(info, peer_port, tracker_port, send, recv); 
+    } else if info.announce.starts_with("http://") || info.announce.starts_with("https://") {
+        send.send(TrackerState::Close("HTTP Tracker Not Implemented".to_string()));
+    } else {
+        send.send(
+            TrackerState::Close("Unknown tracker protocol".to_string())
+        );
     }
 }
 
 pub fn connect(info: &Info, peer_port: u16, tracker_port: u16) -> (Sender<TrackerState>, Receiver<TrackerState>) {
-    let info = info.clone();
+     let info = info.clone();
 
     let (thread_send, main_recv): (Sender<TrackerState>, Receiver<TrackerState>) = mpsc::channel();
     let (main_send, thread_recv): (Sender<TrackerState>, Receiver<TrackerState>) = mpsc::channel();
