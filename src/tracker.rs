@@ -264,11 +264,15 @@ pub fn udp_tracker(info: &Info, peer_port: u16, tracker_port: u16, sender: Sende
     }
 }
 
+pub fn http_tracker(info: &Info, peer_port: u16, tracker_port: u16, send: Sender<TrackerState>, recv: Receiver<TrackerState>) {
+    send.send(TrackerState::Close("HTTP Tracker Not Implemented".to_string()));
+}
+
 pub fn tracker_thread(info: &Info, peer_port: u16, tracker_port: u16, send: Sender<TrackerState>, recv: Receiver<TrackerState>) {
     if info.announce.starts_with("udp://") {
        udp_tracker(info, peer_port, tracker_port, send, recv); 
     } else if info.announce.starts_with("http://") || info.announce.starts_with("https://") {
-        send.send(TrackerState::Close("HTTP Tracker Not Implemented".to_string()));
+        http_tracker(info, peer_port, tracker_port, send, recv);
     } else {
         send.send(
             TrackerState::Close("Unknown tracker protocol".to_string())
