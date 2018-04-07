@@ -1,5 +1,5 @@
 use torrent::Info;
-use url::{Url};
+use url::{form_urlencoded, Url};
 use std::io::Write;
 use byteorder::{BE, ReadBytesExt, WriteBytesExt};
 use std::net::{IpAddr, Ipv4Addr, UdpSocket};
@@ -181,6 +181,7 @@ impl Response for AnnounceResp {
 const CONNECT_RESP_SIZE: usize = 16;
 const ANNOUNCE_RESP_SIZE: usize = 20;
 const IP_SIZE: usize = 6;
+const NUM_WANT: usize = 50;
 
 /**
  * Tracker Logic
@@ -199,8 +200,6 @@ fn udp_do_connect(url: &Url, socket: &mut UdpSocket) -> Result<ConnectResp, MsgE
 
 fn udp_do_announce(url: &Url, connection: u64, peer_port: u16, info_hash: &[u8], peer_id: &[u8], socket: &mut UdpSocket) -> Result<AnnounceResp, MsgError> {
 
-    const NUM_PEERS: usize = 30;
-
     let announce = AnnounceCmd {
         connection_id: connection, 
         transaction_id: 23131,
@@ -212,14 +211,14 @@ fn udp_do_announce(url: &Url, connection: u64, peer_port: u16, info_hash: &[u8],
         event: 0,
         ip: 0,
         key: 0,
-        num_want: NUM_PEERS as u32,
+        num_want: NUM_WANT as u32,
         port: peer_port as u16
     };
 
     println!("Sending Announce for hash {:?} (len {}) peer {:?} (len {})", info_hash, info_hash.len(), announce.peer_id, announce.peer_id.len());
 
     socket.send_to(&announce.serialize(), url).expect("couldn't send data");
-    let mut resp = [0; ANNOUNCE_RESP_SIZE + IP_SIZE + (IP_SIZE * NUM_PEERS)];
+    let mut resp = [0; ANNOUNCE_RESP_SIZE + IP_SIZE + (IP_SIZE * NUM_WANT)];
     
     if let Ok(v) = socket.recv(&mut resp) {
         Ok(AnnounceResp::deserialize(23131, &resp[0..v])?)
@@ -265,7 +264,12 @@ pub fn udp_tracker(info: &Info, peer_port: u16, tracker_port: u16, sender: Sende
 }
 
 pub fn http_tracker(info: &Info, peer_port: u16, tracker_port: u16, send: Sender<TrackerState>, recv: Receiver<TrackerState>) {
-    send.send(TrackerState::Close("HTTP Tracker Not Implemented".to_string()));
+
+    loop {
+        let tracker_request = format!("{}?info_hash={}&peer_id={}&port={}&uploaded={}&downloaded={}", info.announce, info.info_hash, info.peer_id, peer_port, uploaded, downloaded);
+        println!("Requesting a set of peers using {}", tracker_request); 
+    }
+
 }
 
 pub fn tracker_thread(info: &Info, peer_port: u16, tracker_port: u16, send: Sender<TrackerState>, recv: Receiver<TrackerState>) {
