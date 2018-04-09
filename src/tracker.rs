@@ -1,6 +1,6 @@
 use torrent::Info;
 use url::{form_urlencoded, Url};
-use std::io::Write;
+use std::io::{copy, Read, Write};
 use byteorder::{BE, ReadBytesExt, WriteBytesExt};
 use std::net::{IpAddr, Ipv4Addr, UdpSocket};
 use std::sync::mpsc::{Sender, Receiver};
@@ -8,6 +8,9 @@ use std::sync::mpsc;
 use std::{thread, time};
 use std::str;
 use urlencode::urlencode;
+use reqwest;
+use reqwest::header::ContentLength;
+use bencoder;
 
 /**
  * Error Handlers
@@ -265,14 +268,72 @@ pub fn udp_tracker(info: &Info, peer_port: u16, tracker_port: u16, sender: Sende
     }
 }
 
+fn gen_tracker_request(info: &Info, peer_port: u16) -> String {
+    let uploaded = 0;
+    let downloaded = 0;
+    let left = 0;
+    let event = "started";
+
+    format!("{}?info_hash={}&peer_id={}&port={}&uploaded={}&downloaded={}&left={}&event={}&compact=1",
+        info.announce,
+        urlencode(&info.info_hash),
+        urlencode(&info.peer_id),
+        peer_port,
+        uploaded,
+        downloaded,
+        left,
+        event)
+}
+
+pub fn http_tracker_do_announce(info: &Info, peer_port: u16) -> Result<bencoder::Entry, String> {
+    let mut response = reqwest::get(&gen_tracker_request(info, peer_port)).expect("Failed to send request");
+    if response.status() == reqwest::StatusCode::Ok {
+        let len = response.headers().get::<ContentLength>()
+            .map(|ct_len| **ct_len)
+            .unwrap_or(0);
+        let mut buf = Vec::with_capacity(len as usize);
+        
+        if let Err(v) = copy(&mut response, &mut buf) {
+            Err(v.to_string())
+        } else {
+            let mut buf = &buf[0..];
+            let info = bencoder::decode(&mut buf);
+
+            match info {
+                Ok(info) => Ok(info),
+                Err(v) => Err("Bencoder decode error".to_string())
+            }
+        }
+    } else {
+        Err("Announce error".to_string())
+    }
+}
+
 pub fn http_tracker(info: &Info, peer_port: u16, tracker_port: u16, send: Sender<TrackerState>, recv: Receiver<TrackerState>) {
 
     loop {
-        let uploaded = 0;
-        let downloaded = 0;
-        let tracker_request = format!("{}?info_hash={}&peer_id={}&port={}&uploaded={}&downloaded={}", info.announce, urlencode(&info.info_hash), urlencode(&info.peer_id), peer_port, uploaded, downloaded);
-        println!("Requesting a set of peers using {}", tracker_request);
-        break; 
+
+        let announce_resp = http_tracker_do_announce(info, peer_port);
+
+        if announce_resp.is_err() {
+            send.send(TrackerState::Close("Announce resp error".to_string()));
+            return;
+        }
+
+        let announce_resp = announce_resp.unwrap();
+
+        //TODO: Extract all the peers
+
+        let interval = announce_resp.field("interval");
+
+        if interval.is_err() {
+            send.send(TrackerState::Close("No interval error".to_string()));
+            return;
+        }
+
+        let interval = interval.unwrap();
+
+        thread::sleep(time::Duration::from_millis(interval.as_usize().unwrap() as u64));
     }
     
     send.send(TrackerState::Close("Broke HTTP Tracker".to_string()));
