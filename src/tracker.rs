@@ -6,6 +6,8 @@ use std::net::{IpAddr, Ipv4Addr, UdpSocket};
 use std::sync::mpsc::{Sender, Receiver};
 use std::sync::mpsc;
 use std::{thread, time};
+use std::str;
+use urlencode::urlencode;
 
 /**
  * Error Handlers
@@ -266,15 +268,19 @@ pub fn udp_tracker(info: &Info, peer_port: u16, tracker_port: u16, sender: Sende
 pub fn http_tracker(info: &Info, peer_port: u16, tracker_port: u16, send: Sender<TrackerState>, recv: Receiver<TrackerState>) {
 
     loop {
-        let tracker_request = format!("{}?info_hash={}&peer_id={}&port={}&uploaded={}&downloaded={}", info.announce, info.info_hash, info.peer_id, peer_port, uploaded, downloaded);
-        println!("Requesting a set of peers using {}", tracker_request); 
+        let uploaded = 0;
+        let downloaded = 0;
+        let tracker_request = format!("{}?info_hash={}&peer_id={}&port={}&uploaded={}&downloaded={}", info.announce, urlencode(&info.info_hash), urlencode(&info.peer_id), peer_port, uploaded, downloaded);
+        println!("Requesting a set of peers using {}", tracker_request);
+        break; 
     }
-
+    
+    send.send(TrackerState::Close("Broke HTTP Tracker".to_string()));
 }
 
 pub fn tracker_thread(info: &Info, peer_port: u16, tracker_port: u16, send: Sender<TrackerState>, recv: Receiver<TrackerState>) {
     if info.announce.starts_with("udp://") {
-       udp_tracker(info, peer_port, tracker_port, send, recv); 
+        udp_tracker(info, peer_port, tracker_port, send, recv); 
     } else if info.announce.starts_with("http://") || info.announce.starts_with("https://") {
         http_tracker(info, peer_port, tracker_port, send, recv);
     } else {

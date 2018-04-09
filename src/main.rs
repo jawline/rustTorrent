@@ -16,6 +16,7 @@ mod download;
 mod peer_server;
 mod peer_client;
 mod peer_id;
+mod urlencode;
 
 use std::env;
 
