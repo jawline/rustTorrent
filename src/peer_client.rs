@@ -87,6 +87,7 @@ impl GeneralMsg {
             })
         } else {
             let action = stream.read_u8()?;
+            println!("Reading {} size {}", action, msg_len);
             let mut payload = vec![0; (msg_len - 1) as usize];
             stream.read(&mut payload)?;
             Ok(GeneralMsg {
@@ -97,6 +98,40 @@ impl GeneralMsg {
     }
 }
 
+fn request(stream: &mut TcpStream, piece: usize, start: usize, length: usize, piece_size: usize) -> Result<(), io::Error> {
+
+    let length = if start + length > piece_size {
+        piece_size - start
+    } else {
+        length
+    };
+
+    let mut request_data = Vec::with_capacity(12);
+    request_data.write_u32::<BE>(piece as u32);
+    request_data.write_u32::<BE>(start as u32);
+    request_data.write_u32::<BE>(length as u32);
+
+    let msg = GeneralMsg {
+        action: 6,
+        payload: request_data
+    };
+
+    stream.write(&msg.serialize())?;
+    Ok(())
+}
+
+fn interested(stream: &mut TcpStream) -> Result<(), io::Error> {
+    stream.write(&GeneralMsg{ action: 2, payload: Vec::new() }.serialize())?;
+    Ok(())
+}
+
+fn unchoked(stream: &mut TcpStream) -> Result<(), io::Error> {
+    stream.write(&GeneralMsg { action: 1, payload: Vec::new() }.serialize())?;
+    Ok(())
+}
+
+const MAX_REQUEST_SIZE: usize = 16384;
+
 pub fn peer_client(torrent: &Info, peer: &PeerAddress) -> (Sender<ClientState>, Receiver<ClientState>) {
     let torrent = torrent.clone();
     let peer = peer.clone();
@@ -105,8 +140,13 @@ pub fn peer_client(torrent: &Info, peer: &PeerAddress) -> (Sender<ClientState>, 
     let (main_send, thread_recv): (Sender<ClientState>, Receiver<ClientState>) = mpsc::channel();
 
     let mut bitfield = Bitfield::new((0..torrent.pieces.len() / 8).map(|_| 0).collect());
-    let mut am_choked = 1;
-    let mut am_interested = 0;
+    let mut am_choked = true;
+    let mut am_interested = false;
+    let mut am_acquiring = false;
+    let mut acquiring = 0;
+    let mut acquire_step = 0;
+    let mut waiting_piece = false;
+    let mut acquire_buffer = vec![0; torrent.piece_length];
 
     thread::spawn(move || {
         let mut client = TcpStream::connect((peer.ip, peer.port));
@@ -156,19 +196,20 @@ pub fn peer_client(torrent: &Info, peer: &PeerAddress) -> (Sender<ClientState>, 
             match msg.action {
                 0 => /* Choke */ {
                     println!("Choked");
-                    am_choked = 1;
+                    am_choked = true;
+                    waiting_piece = false;
                 },
                 1 => /* Unchoked */ {
                     println!("Unchoked");
-                    am_choked = 0;
+                    am_choked = false;
                 },
                 2 => /* Interested */ {
                     println!("Interested");
-                    am_interested = 1;
+                    am_interested = true;
                 },
                 3 => /* Not Interested */ {
                     println!("Not Interested");
-                    am_interested = 0;
+                    am_interested = false;
                 },
                 4 => /* Have */ {
                     let mut payload: &[u8] = &msg.payload;
@@ -176,14 +217,28 @@ pub fn peer_client(torrent: &Info, peer: &PeerAddress) -> (Sender<ClientState>, 
                     if payload.len() == 4 {
                         let piece = payload.read_u32::<BE>().unwrap();
                         bitfield.set(piece as usize, true);
-                        println!("Have {}", piece);
                     } else {
                         println!("Have - Bad payload");
                     }
                 },
                 5 => /* Bitfield */ {
                     bitfield = Bitfield::new(msg.payload);
-                    println!("Bitfield set");
+                    interested(&mut client);
+                    unchoked(&mut client);
+                },
+                7 => /* Piece */ {
+                    let mut payload: &[u8] = &msg.payload;
+                    let index = payload.read_u32::<BE>().unwrap();
+                    let begin = payload.read_u32::<BE>().unwrap() as usize;
+                    let length = payload.len();
+                    println!("{} {} {}", index, begin, length);
+                    let mut buffer_lock = &mut acquire_buffer[begin..begin + length];
+                    ::std::io::copy(&mut payload, &mut buffer_lock).unwrap();
+                    acquire_step = begin + length;
+                    waiting_piece = false;
+                },
+                8 => {
+                    println!("Cancel Received");
                 },
                 255 => {
                     println!("Keep-Alive");
@@ -194,6 +249,22 @@ pub fn peer_client(torrent: &Info, peer: &PeerAddress) -> (Sender<ClientState>, 
                 }
             }
 
+            if !am_choked && !am_acquiring && bitfield.get(0) {
+                println!("I am going to acquire 0");
+                am_acquiring = true;
+                request(&mut client, acquiring, acquire_step, MAX_REQUEST_SIZE, torrent.piece_length);
+                println!("Requested a packet"); 
+            }
+
+            if !am_choked && am_acquiring && !waiting_piece {
+                if acquire_step < torrent.piece_length {
+                    request(&mut client, acquiring, acquire_step, MAX_REQUEST_SIZE, torrent.piece_length);
+                    println!("Requested {}", acquire_step);
+                } else {
+                    println!("Finished piece {}", acquiring);
+                    am_acquiring = false;
+                }
+            }
         }
     });
 

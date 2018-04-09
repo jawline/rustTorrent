@@ -17,5 +17,5 @@ pub fn urlencode(bytes: &[u8]) -> String {
         }
     })
     .collect();
-  strs.connect("")
+  strs.join("")
 }
