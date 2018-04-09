@@ -309,6 +309,32 @@ pub fn http_tracker_do_announce(info: &Info, peer_port: u16) -> Result<bencoder:
     }
 }
 
+pub fn http_tracker_extract_peers(peers: &bencoder::Entry, send: &Sender<TrackerState>) {
+    let mut extracted = Vec::new();
+
+    if let bencoder::EntryData::Str(ref v) = &peers.data {
+        //Binary strings model, 6 bytes representation, 4 bytes are IP 2 bytes are port all big endian
+
+        for i in 0..v.len() / 6 {
+            let mut data = &v[(i * 6) .. ((i * 6) + 6)];
+
+            let ip = data.read_u32::<BE>().unwrap();
+            let port = data.read_u16::<BE>().unwrap();
+
+            extracted.push(PeerAddress {
+                ip: IpAddr::V4(Ipv4Addr::from(ip)),
+                port: port
+            });
+        }
+
+    } else {
+        println!("Dictionary Model");
+        //Dictionary model, each entry has an ip and a port, ip might be IPv6 or IPv4
+    }
+
+    send.send(TrackerState::Announced(extracted));
+}
+
 pub fn http_tracker(info: &Info, peer_port: u16, tracker_port: u16, send: Sender<TrackerState>, recv: Receiver<TrackerState>) {
 
     loop {
@@ -322,7 +348,11 @@ pub fn http_tracker(info: &Info, peer_port: u16, tracker_port: u16, send: Sender
 
         let announce_resp = announce_resp.unwrap();
 
-        //TODO: Extract all the peers
+        let peers = announce_resp.field("peers");
+        
+        if let Ok(peers) = peers {
+            http_tracker_extract_peers(&peers, &send);
+        }
 
         let interval = announce_resp.field("interval");
 
