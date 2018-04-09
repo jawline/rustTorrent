@@ -20,7 +20,7 @@ impl Bitfield {
     pub fn get(&self, piece: usize) -> bool {
         let idx = Bitfield::chunk(piece);
         let bit = Bitfield::bit(piece); 
-        let mask = (1 << (8 - bit));
+        let mask = (1 << (7 - bit));
         println!("Idx: {} Bit: {} Field {} Has {}", idx, bit, mask, self.data[idx] & mask);
         self.data[idx] & mask != 0
     }

@@ -78,13 +78,22 @@ impl GeneralMsg {
 
     pub fn recv(stream: &mut TcpStream) -> Result<GeneralMsg, io::Error> {
         let msg_len = stream.read_u32::<BE>()?;
-        let action = stream.read_u8()?;
-        let mut payload = vec![0; (msg_len - 1) as usize];
-        stream.read(&mut payload)?;
-        Ok(GeneralMsg {
-            action: action,
-            payload: payload
-        }) 
+
+        if msg_len == 0 {
+            //Keep alive message we call action 255 internally (TODO: This might break something?)
+            Ok(GeneralMsg {
+                action: 255,
+                payload: Vec::new()
+            })
+        } else {
+            let action = stream.read_u8()?;
+            let mut payload = vec![0; (msg_len - 1) as usize];
+            stream.read(&mut payload)?;
+            Ok(GeneralMsg {
+                action: action,
+                payload: payload
+            })
+        }
     }
 }
 
@@ -96,6 +105,8 @@ pub fn peer_client(torrent: &Info, peer: &PeerAddress) -> (Sender<ClientState>, 
     let (main_send, thread_recv): (Sender<ClientState>, Receiver<ClientState>) = mpsc::channel();
 
     let mut bitfield = Bitfield::new((0..torrent.pieces.len() / 8).map(|_| 0).collect());
+    let mut am_choked = 1;
+    let mut am_interested = 0;
 
     thread::spawn(move || {
         let mut client = TcpStream::connect((peer.ip, peer.port));
@@ -130,7 +141,7 @@ pub fn peer_client(torrent: &Info, peer: &PeerAddress) -> (Sender<ClientState>, 
             return;
         }
 
-        println!("Handshake Received {:?}", handshake_recv);
+        println!("Handshake Received");
 
         loop {
             let next = GeneralMsg::recv(&mut client);
@@ -143,11 +154,40 @@ pub fn peer_client(torrent: &Info, peer: &PeerAddress) -> (Sender<ClientState>, 
             let msg = next.unwrap();
 
             match msg.action {
+                0 => /* Choke */ {
+                    println!("Choked");
+                    am_choked = 1;
+                },
+                1 => /* Unchoked */ {
+                    println!("Unchoked");
+                    am_choked = 0;
+                },
+                2 => /* Interested */ {
+                    println!("Interested");
+                    am_interested = 1;
+                },
+                3 => /* Not Interested */ {
+                    println!("Not Interested");
+                    am_interested = 0;
+                },
+                4 => /* Have */ {
+                    let mut payload: &[u8] = &msg.payload;
+
+                    if payload.len() == 4 {
+                        let piece = payload.read_u32::<BE>().unwrap();
+                        bitfield.set(piece as usize, true);
+                        println!("Have {}", piece);
+                    } else {
+                        println!("Have - Bad payload");
+                    }
+                },
                 5 => /* Bitfield */ {
                     bitfield = Bitfield::new(msg.payload);
-                    bitfield.get(0);
-                    bitfield.get(1);
-                }
+                    println!("Bitfield set");
+                },
+                255 => {
+                    println!("Keep-Alive");
+                },
                 _ => {
                     thread_send.send(ClientState::Close(format!("Unhandled action {}", msg.action))).unwrap();
                     return;

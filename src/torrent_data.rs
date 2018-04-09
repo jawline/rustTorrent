@@ -5,9 +5,11 @@
 use std::fs::File;
 use std::io;
 use std::io::Write;
+use bitfield::Bitfield;
 
 pub struct TorrentData {
     pub data_path: String,
+    pub data_have: Bitfield,
     pub pieces: Vec<Vec<u8>>, //Sha1 hashes of each piece of the torrent
     pub piece_size: usize
 }
@@ -33,6 +35,7 @@ impl TorrentData {
 
         Ok(TorrentData {
             data_path: name.to_string(),
+            data_have: Bitfield::new((0..pieces.len() / 8).map(|_| 0).collect()),
             pieces: pieces,
             piece_size: piece_size
         })
