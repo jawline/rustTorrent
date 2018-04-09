@@ -1,11 +1,16 @@
 use torrent::Info;
-use url::{Url};
-use std::io::Write;
+use url::{form_urlencoded, Url};
+use std::io::{copy, Read, Write};
 use byteorder::{BE, ReadBytesExt, WriteBytesExt};
 use std::net::{IpAddr, Ipv4Addr, UdpSocket};
 use std::sync::mpsc::{Sender, Receiver};
 use std::sync::mpsc;
 use std::{thread, time};
+use std::str;
+use urlencode::urlencode;
+use reqwest;
+use reqwest::header::ContentLength;
+use bencoder;
 
 /**
  * Error Handlers
@@ -181,6 +186,7 @@ impl Response for AnnounceResp {
 const CONNECT_RESP_SIZE: usize = 16;
 const ANNOUNCE_RESP_SIZE: usize = 20;
 const IP_SIZE: usize = 6;
+const NUM_WANT: usize = 50;
 
 /**
  * Tracker Logic
@@ -199,8 +205,6 @@ fn udp_do_connect(url: &Url, socket: &mut UdpSocket) -> Result<ConnectResp, MsgE
 
 fn udp_do_announce(url: &Url, connection: u64, peer_port: u16, info_hash: &[u8], peer_id: &[u8], socket: &mut UdpSocket) -> Result<AnnounceResp, MsgError> {
 
-    const NUM_PEERS: usize = 30;
-
     let announce = AnnounceCmd {
         connection_id: connection, 
         transaction_id: 23131,
@@ -212,12 +216,12 @@ fn udp_do_announce(url: &Url, connection: u64, peer_port: u16, info_hash: &[u8],
         event: 0,
         ip: 0,
         key: 0,
-        num_want: NUM_PEERS as u32,
+        num_want: NUM_WANT as u32,
         port: peer_port as u16
     };
 
     socket.send_to(&announce.serialize(), url).expect("couldn't send data");
-    let mut resp = [0; ANNOUNCE_RESP_SIZE + IP_SIZE + (IP_SIZE * NUM_PEERS)];
+    let mut resp = [0; ANNOUNCE_RESP_SIZE + IP_SIZE + (IP_SIZE * NUM_WANT)];
     
     if let Ok(v) = socket.recv(&mut resp) {
         Ok(AnnounceResp::deserialize(23131, &resp[0..v])?)
@@ -226,47 +230,157 @@ fn udp_do_announce(url: &Url, connection: u64, peer_port: u16, info_hash: &[u8],
     }
 }
 
-pub fn tracker_thread(info: &Info, peer_port: u16, tracker_port: u16, sender: Sender<TrackerState>, recv: Receiver<TrackerState>) {
-    if info.announce.starts_with("udp://") {
+pub fn udp_tracker(info: &Info, peer_port: u16, tracker_port: u16, sender: Sender<TrackerState>, recv: Receiver<TrackerState>) {
+    let announce = Url::parse(&info.announce.to_string());
+    let udp_addr = "0.0.0.0:".to_string() + &tracker_port.to_string();
 
-        let announce = Url::parse(&info.announce.to_string());
-        let udp_addr = "0.0.0.0:".to_string() + &tracker_port.to_string();
+    let announce = announce.unwrap();
 
-        let announce = announce.unwrap();
+    println!("UDP Tracker {} to {}", udp_addr, announce);
 
-        println!("UDP Tracker {} to {}", udp_addr, announce);
+    let mut socket = UdpSocket::bind(udp_addr).expect("couldn't bind to address");
 
-        let mut socket = UdpSocket::bind(udp_addr).expect("couldn't bind to address");
+    let connection = udp_do_connect(&announce, &mut socket);
 
-        let connection = udp_do_connect(&announce, &mut socket);
+    if let Err(v) = connection {
+        sender.send(TrackerState::Close(v.clone())).unwrap();
+        return;
+    }
 
-        if let Err(v) = connection {
+    let connection = connection.unwrap().connection_id;
+    sender.send(TrackerState::Connected(connection));
+
+    loop {
+        let announced = udp_do_announce(&announce, connection, peer_port, &info.info_hash, &info.peer_id, &mut socket); 
+
+        if let Err(v) = announced {
             sender.send(TrackerState::Close(v.clone())).unwrap();
             return;
         }
 
-        let connection = connection.unwrap().connection_id;
-        sender.send(TrackerState::Connected(connection));
+        let announced = announced.unwrap();
 
-        loop {
-            let announced = udp_do_announce(&announce, connection, peer_port, &info.info_hash, &info.peer_id, &mut socket); 
+        sender.send(TrackerState::Announced(announced.peers.clone()));
+        
+        thread::sleep(time::Duration::from_millis(announced.interval as u64));
+    }
+}
 
-            if let Err(v) = announced {
-                sender.send(TrackerState::Close(v.clone())).unwrap();
-                return;
+fn gen_tracker_request(info: &Info, peer_port: u16) -> String {
+    let uploaded = 0;
+    let downloaded = 0;
+    let left = 0;
+    let event = "started";
+
+    format!("{}?info_hash={}&peer_id={}&port={}&uploaded={}&downloaded={}&left={}&event={}&compact=1",
+        info.announce,
+        urlencode(&info.info_hash),
+        urlencode(&info.peer_id),
+        peer_port,
+        uploaded,
+        downloaded,
+        left,
+        event)
+}
+
+pub fn http_tracker_do_announce(info: &Info, peer_port: u16) -> Result<bencoder::Entry, String> {
+    let mut response = reqwest::get(&gen_tracker_request(info, peer_port)).expect("Failed to send request");
+    if response.status() == reqwest::StatusCode::Ok {
+        let len = response.headers().get::<ContentLength>()
+            .map(|ct_len| **ct_len)
+            .unwrap_or(0);
+        let mut buf = Vec::with_capacity(len as usize);
+        
+        if let Err(v) = copy(&mut response, &mut buf) {
+            Err(v.to_string())
+        } else {
+            let mut buf = &buf[0..];
+            let info = bencoder::decode(&mut buf);
+
+            match info {
+                Ok(info) => Ok(info),
+                Err(v) => Err("Bencoder decode error".to_string())
             }
-
-            let announced = announced.unwrap();
-
-            sender.send(TrackerState::Announced(announced.peers.clone()));
-            
-            thread::sleep(time::Duration::from_millis(announced.interval as u64));
         }
+    } else {
+        Err("Announce error".to_string())
+    }
+}
+
+pub fn http_tracker_extract_peers(peers: &bencoder::Entry, send: &Sender<TrackerState>) {
+    let mut extracted = Vec::new();
+
+    if let bencoder::EntryData::Str(ref v) = &peers.data {
+        //Binary strings model, 6 bytes representation, 4 bytes are IP 2 bytes are port all big endian
+
+        for i in 0..v.len() / 6 {
+            let mut data = &v[(i * 6) .. ((i * 6) + 6)];
+
+            let ip = data.read_u32::<BE>().unwrap();
+            let port = data.read_u16::<BE>().unwrap();
+
+            extracted.push(PeerAddress {
+                ip: IpAddr::V4(Ipv4Addr::from(ip)),
+                port: port
+            });
+        }
+
+    } else {
+        println!("Dictionary Model");
+        //Dictionary model, each entry has an ip and a port, ip might be IPv6 or IPv4
+    }
+
+    send.send(TrackerState::Announced(extracted));
+}
+
+pub fn http_tracker(info: &Info, peer_port: u16, tracker_port: u16, send: Sender<TrackerState>, recv: Receiver<TrackerState>) {
+
+    loop {
+
+        let announce_resp = http_tracker_do_announce(info, peer_port);
+
+        if announce_resp.is_err() {
+            send.send(TrackerState::Close("Announce resp error".to_string()));
+            return;
+        }
+
+        let announce_resp = announce_resp.unwrap();
+
+        let peers = announce_resp.field("peers");
+        
+        if let Ok(peers) = peers {
+            http_tracker_extract_peers(&peers, &send);
+        }
+
+        let interval = announce_resp.field("interval");
+
+        if interval.is_err() {
+            send.send(TrackerState::Close("No interval error".to_string()));
+            return;
+        }
+
+        let interval = interval.unwrap();
+
+        thread::sleep(time::Duration::from_millis(interval.as_usize().unwrap() as u64));
+    }
+    
+    send.send(TrackerState::Close("Broke HTTP Tracker".to_string()));
+}
+
+pub fn tracker_thread(info: &Info, peer_port: u16, tracker_port: u16, send: Sender<TrackerState>, recv: Receiver<TrackerState>) {
+    if info.announce.starts_with("udp://") {
+        udp_tracker(info, peer_port, tracker_port, send, recv); 
+    } else if info.announce.starts_with("http://") || info.announce.starts_with("https://") {
+        http_tracker(info, peer_port, tracker_port, send, recv);
+    } else {
+        send.send(
+            TrackerState::Close("Unknown tracker protocol".to_string())
+        );
     }
 }
 
 pub fn connect(info: &Info, peer_port: u16, tracker_port: u16) -> (Sender<TrackerState>, Receiver<TrackerState>) {
-    let info = info.clone();
+     let info = info.clone();
 
     let (thread_send, main_recv): (Sender<TrackerState>, Receiver<TrackerState>) = mpsc::channel();
     let (main_send, thread_recv): (Sender<TrackerState>, Receiver<TrackerState>) = mpsc::channel();
