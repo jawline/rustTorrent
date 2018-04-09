@@ -41,8 +41,15 @@ pub fn peer_client(torrent: &Info, peer: &PeerAddress) -> (Sender<ClientState>, 
     let (main_send, thread_recv): (Sender<ClientState>, Receiver<ClientState>) = mpsc::channel();
 
     thread::spawn(move || {
-        let mut client = TcpStream::connect((peer.ip, peer.port)).unwrap();
-        
+        let mut client = TcpStream::connect((peer.ip, peer.port));
+
+        if let Err(e) = client {
+            thread_send.send(ClientState::Close(e.to_string()));
+            return;
+        }
+
+        let mut client = client.unwrap();
+       
         let handshake = HandshakeMsg {
             pstr: "BitTorrent protocol".to_string(),
             info_hash: torrent.info_hash.clone(),
@@ -50,10 +57,12 @@ pub fn peer_client(torrent: &Info, peer: &PeerAddress) -> (Sender<ClientState>, 
         };
 
         if let Err(_) = client.write(&handshake.serialize()) {
-            println!("Error sending BT peer-wire handshake");
+            thread_send.send(ClientState::Close("Error sending BT peer-wire handshake".to_string()));
+            return;
         }
 
         println!("Send BitTorrent wire handshake");
+        thread_send.send(ClientState::Close("Finished".to_string()));
     });
 
     (main_send, main_recv)

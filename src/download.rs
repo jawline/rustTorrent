@@ -47,16 +47,46 @@ pub fn download(filename: &str) -> (Sender<DownloadState>, Receiver<DownloadStat
 
         let (tracker_send, tracker_recv) = connect(&info, peer_port, tracker_port);
 
-        let mut active_peers = Vec::new();
+        let mut active_peers: Vec<Peer> = Vec::new();
 
         loop {
 
+            //Check if a control signal has been sent
             let ctrl_data = thread_recv.try_recv();
             
             if let Ok(DownloadState::Close) = ctrl_data {
                 tracker_send.send(TrackerState::Close("Requested".to_string()));
             }
 
+            //Update peer-wire client info
+            let mut closed = Vec::new();
+
+            //Read all signals from clients & process
+            for client_num in 0..active_peers.len() {
+                let (send, recv) = &active_peers[client_num].channel;
+
+                loop {
+                    let client_data = recv.try_recv();
+                    if let Ok(signal) = client_data {
+                        match signal {
+                            ClientState::Close(reason) => {
+                                println!("Flagging {:?} for close due to {}", active_peers[client_num].id, reason);
+                                closed.push(client_num);
+                            }
+                        }
+                    } else { //No More Incoming Data
+                        break;
+                    } 
+                }           
+            }
+
+            //Back-to-front remove each index in vector (Preserves removal-index)
+            closed.iter().rev().for_each(|&i| {
+                println!("Remove {:?}", active_peers[i].id);
+                active_peers.remove(i);
+            });
+
+            //Update tracker information
             let tracker_data = tracker_recv.try_recv();
 
             match tracker_data {
