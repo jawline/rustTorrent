@@ -4,10 +4,12 @@
 
 use torrent::Info;
 use tracker::PeerAddress;
+use std::io;
 use std::io::Write;
 use std::net::TcpStream;
 use std::thread;
 use std::sync::mpsc::{Sender, Receiver};
+use byteorder::{BE, WriteBytesExt, ReadBytesExt};
 use std::sync::mpsc;
 
 pub enum ClientState {
@@ -30,6 +32,26 @@ impl HandshakeMsg {
         data.write(&self.info_hash).unwrap();
         data.write(&self.peer_id).unwrap();
         data
+    }
+}
+
+pub struct GeneralMsg {
+    pub action: u8,
+    pub payload: Vec<u8>
+}
+
+impl GeneralMsg {
+    
+    pub fn serialize(&self) -> Vec<u8> {
+        let resvd = [0u8; 8];
+        let mut data = Vec::new();
+        data.write_u32::<BE>(self.payload.len() as u32).unwrap();
+        data.write(&[self.action]).unwrap();
+        data.write(&self.payload);
+        data
+    }
+
+    pub fn recv(stream: &mut TcpStream) -> Result<GeneralMsg, io::Error> {
     }
 }
 
