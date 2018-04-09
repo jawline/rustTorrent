@@ -2,6 +2,7 @@
  * Manage writes and hashing of downloaded portions of a torrent
  */
 
+use std::path::Path;
 use std::fs::File;
 use std::io;
 use std::io::Write;
@@ -21,17 +22,21 @@ fn zeros(size: usize) -> Vec<u8> {
 impl TorrentData {
     pub fn allocate(name: &str, pieces: Vec<Vec<u8>>, piece_size: usize) -> Result<TorrentData, io::Error> {
 
-        println!("Pre-allocating space for the torrent");
+        if !Path::new(name).exists() {
+            println!("Pre-allocating space for the torrent");
 
-        let mut torrent_file = File::create(name)?;
-        
-        let zero_piece = zeros(piece_size);
+            let mut torrent_file = File::create(name)?;
+            
+            let zero_piece = zeros(piece_size);
 
-        for _ in 0..pieces.len() {
-            torrent_file.write(&zero_piece)?;
+            for _ in 0..pieces.len() {
+                torrent_file.write(&zero_piece)?;
+            }
+
+            println!("Pre-allocated");
+        } else {
+            println!("TODO: File exists, should check");
         }
-
-        println!("Pre-allocated");
 
         Ok(TorrentData {
             data_path: name.to_string(),

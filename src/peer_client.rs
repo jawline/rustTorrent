@@ -87,9 +87,14 @@ impl GeneralMsg {
             })
         } else {
             let action = stream.read_u8()?;
-            println!("Reading {} size {}", action, msg_len);
-            let mut payload = vec![0; (msg_len - 1) as usize];
-            stream.read(&mut payload)?;
+            let mut payload = vec![0; (msg_len -1) as usize];
+            println!("Reading {} size {}", action, msg_len - 1);
+
+            //Does this message have a payload?
+            if msg_len > 1 {
+                stream.read_exact(&mut payload)?;
+            }
+
             Ok(GeneralMsg {
                 action: action,
                 payload: payload
@@ -158,8 +163,8 @@ pub fn peer_client(torrent: &Info, peer: &PeerAddress) -> (Sender<ClientState>, 
 
         let mut client = client.unwrap();
 
-        client.set_read_timeout(Some(time::Duration::from_millis(5000)));
-        client.set_write_timeout(Some(time::Duration::from_millis(5000)));
+        client.set_read_timeout(Some(time::Duration::from_millis(15000)));
+        client.set_write_timeout(Some(time::Duration::from_millis(15000)));
        
         let handshake = HandshakeMsg {
             pstr: "BitTorrent protocol".to_string(),
@@ -231,7 +236,6 @@ pub fn peer_client(torrent: &Info, peer: &PeerAddress) -> (Sender<ClientState>, 
                     let index = payload.read_u32::<BE>().unwrap();
                     let begin = payload.read_u32::<BE>().unwrap() as usize;
                     let length = payload.len();
-                    println!("{} {} {}", index, begin, length);
                     let mut buffer_lock = &mut acquire_buffer[begin..begin + length];
                     ::std::io::copy(&mut payload, &mut buffer_lock).unwrap();
                     acquire_step = begin + length;
@@ -240,9 +244,7 @@ pub fn peer_client(torrent: &Info, peer: &PeerAddress) -> (Sender<ClientState>, 
                 8 => {
                     println!("Cancel Received");
                 },
-                255 => {
-                    println!("Keep-Alive");
-                },
+                255 => /* Keep Alive */ {},
                 _ => {
                     thread_send.send(ClientState::Close(format!("Unhandled action {}", msg.action))).unwrap();
                     return;
@@ -252,14 +254,13 @@ pub fn peer_client(torrent: &Info, peer: &PeerAddress) -> (Sender<ClientState>, 
             if !am_choked && !am_acquiring && bitfield.get(0) {
                 println!("I am going to acquire 0");
                 am_acquiring = true;
-                request(&mut client, acquiring, acquire_step, MAX_REQUEST_SIZE, torrent.piece_length);
-                println!("Requested a packet"); 
             }
 
             if !am_choked && am_acquiring && !waiting_piece {
                 if acquire_step < torrent.piece_length {
                     request(&mut client, acquiring, acquire_step, MAX_REQUEST_SIZE, torrent.piece_length);
-                    println!("Requested {}", acquire_step);
+                    println!("Requested {} {} {} {}", acquiring, acquire_step, MAX_REQUEST_SIZE, torrent.piece_length);
+                    waiting_piece = true;
                 } else {
                     println!("Finished piece {}", acquiring);
                     am_acquiring = false;
