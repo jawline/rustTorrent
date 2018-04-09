@@ -8,9 +8,11 @@ use std::io;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::thread;
+use std::time;
 use std::sync::mpsc::{Sender, Receiver};
 use byteorder::{BE, WriteBytesExt, ReadBytesExt};
 use std::sync::mpsc;
+use bitfield::Bitfield;
 
 pub enum ClientState {
     Close(String)
@@ -93,6 +95,8 @@ pub fn peer_client(torrent: &Info, peer: &PeerAddress) -> (Sender<ClientState>, 
     let (thread_send, main_recv): (Sender<ClientState>, Receiver<ClientState>) = mpsc::channel();
     let (main_send, thread_recv): (Sender<ClientState>, Receiver<ClientState>) = mpsc::channel();
 
+    let mut bitfield = Bitfield::new((0..torrent.pieces.len() / 8).map(|_| 0).collect());
+
     thread::spawn(move || {
         let mut client = TcpStream::connect((peer.ip, peer.port));
 
@@ -102,6 +106,9 @@ pub fn peer_client(torrent: &Info, peer: &PeerAddress) -> (Sender<ClientState>, 
         }
 
         let mut client = client.unwrap();
+
+        client.set_read_timeout(Some(time::Duration::from_millis(5000)));
+        client.set_write_timeout(Some(time::Duration::from_millis(5000)));
        
         let handshake = HandshakeMsg {
             pstr: "BitTorrent protocol".to_string(),
@@ -133,7 +140,20 @@ pub fn peer_client(torrent: &Info, peer: &PeerAddress) -> (Sender<ClientState>, 
                 return;
             }
 
-            println!("Msg {:?}", next.unwrap());
+            let msg = next.unwrap();
+
+            match msg.action {
+                5 => /* Bitfield */ {
+                    bitfield = Bitfield::new(msg.payload);
+                    bitfield.get(0);
+                    bitfield.get(1);
+                }
+                _ => {
+                    thread_send.send(ClientState::Close(format!("Unhandled action {}", msg.action))).unwrap();
+                    return;
+                }
+            }
+
         }
     });
 

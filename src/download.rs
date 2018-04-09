@@ -16,7 +16,7 @@ struct Peer {
     channel: (Sender<ClientState>, Receiver<ClientState>)
 }
 
-const MAX_PEERS: usize = 20;
+const MAX_PEERS: usize = 1;
 
 pub fn download(filename: &str) -> (Sender<DownloadState>, Receiver<DownloadState>) {
     
