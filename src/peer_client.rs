@@ -5,7 +5,7 @@
 use torrent::Info;
 use tracker::PeerAddress;
 use std::io;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::thread;
 use std::sync::mpsc::{Sender, Receiver};
@@ -16,6 +16,7 @@ pub enum ClientState {
     Close(String)
 }
 
+#[derive(Debug)]
 pub struct HandshakeMsg {
     pub pstr: String,
     pub info_hash: Vec<u8>,
@@ -33,8 +34,31 @@ impl HandshakeMsg {
         data.write(&self.peer_id).unwrap();
         data
     }
+
+    pub fn recv(stream: &mut TcpStream) -> Result<HandshakeMsg, io::Error> {
+        let pstrlen = stream.read_u8()?;
+
+        let mut pstr = vec![0; pstrlen as usize];
+        stream.read_exact(&mut pstr)?;
+
+        let mut resvd = vec![0; 8];
+        stream.read_exact(&mut resvd)?;
+
+        let mut info_hash = vec![0; 20];
+        let mut peer_id = vec![0; 20];
+
+        stream.read_exact(&mut info_hash)?;
+        stream.read_exact(&mut peer_id)?;
+        
+        Ok(HandshakeMsg {
+            pstr: String::from_utf8(pstr).unwrap() /* TODO: This might error */,
+            info_hash: info_hash,
+            peer_id: peer_id
+        })
+    }
 }
 
+#[derive(Debug)]
 pub struct GeneralMsg {
     pub action: u8,
     pub payload: Vec<u8>
@@ -43,15 +67,22 @@ pub struct GeneralMsg {
 impl GeneralMsg {
     
     pub fn serialize(&self) -> Vec<u8> {
-        let resvd = [0u8; 8];
         let mut data = Vec::new();
-        data.write_u32::<BE>(self.payload.len() as u32).unwrap();
+        data.write_u32::<BE>((self.payload.len() + 1) as u32).unwrap();
         data.write(&[self.action]).unwrap();
-        data.write(&self.payload);
+        data.write(&self.payload).unwrap();
         data
     }
 
     pub fn recv(stream: &mut TcpStream) -> Result<GeneralMsg, io::Error> {
+        let msg_len = stream.read_u32::<BE>()?;
+        let action = stream.read_u8()?;
+        let mut payload = vec![0; (msg_len - 1) as usize];
+        stream.read(&mut payload)?;
+        Ok(GeneralMsg {
+            action: action,
+            payload: payload
+        }) 
     }
 }
 
@@ -84,7 +115,26 @@ pub fn peer_client(torrent: &Info, peer: &PeerAddress) -> (Sender<ClientState>, 
         }
 
         println!("Send BitTorrent wire handshake");
-        thread_send.send(ClientState::Close("Finished".to_string()));
+
+        let handshake_recv = HandshakeMsg::recv(&mut client);
+    
+        if let Err(e) = handshake_recv {
+            thread_send.send(ClientState::Close(e.to_string()));
+            return;
+        }
+
+        println!("Handshake Received {:?}", handshake_recv);
+
+        loop {
+            let next = GeneralMsg::recv(&mut client);
+
+            if let Err(e) = next {
+                thread_send.send(ClientState::Close(e.to_string()));
+                return;
+            }
+
+            println!("Msg {:?}", next.unwrap());
+        }
     });
 
     (main_send, main_recv)
