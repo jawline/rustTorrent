@@ -7,6 +7,12 @@ use tracker::PeerAddress;
 use std::io::Write;
 use std::net::TcpStream;
 use std::thread;
+use std::sync::mpsc::{Sender, Receiver};
+use std::sync::mpsc;
+
+pub enum ClientState {
+    Close(String)
+}
 
 pub struct HandshakeMsg {
     pub pstr: String,
@@ -27,10 +33,13 @@ impl HandshakeMsg {
     }
 }
 
-pub fn peer_client(torrent: &Info, peer: &PeerAddress) {
+pub fn peer_client(torrent: &Info, peer: &PeerAddress) -> (Sender<ClientState>, Receiver<ClientState>) {
     let torrent = torrent.clone();
     let peer = peer.clone();
- 
+
+    let (thread_send, main_recv): (Sender<ClientState>, Receiver<ClientState>) = mpsc::channel();
+    let (main_send, thread_recv): (Sender<ClientState>, Receiver<ClientState>) = mpsc::channel();
+
     thread::spawn(move || {
         let mut client = TcpStream::connect((peer.ip, peer.port)).unwrap();
         
@@ -46,4 +55,6 @@ pub fn peer_client(torrent: &Info, peer: &PeerAddress) {
 
         println!("Send BitTorrent wire handshake");
     });
+
+    (main_send, main_recv)
 }

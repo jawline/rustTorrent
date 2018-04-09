@@ -1,15 +1,22 @@
 use torrent::{from_file, prepare};
-use tracker::{TrackerState, connect};
+use tracker::{TrackerState, PeerAddress, connect};
 use std::sync::mpsc::{Sender, Receiver};
 use std::sync::mpsc;
 use std::thread;
 use std::net::TcpListener;
-use peer_client::peer_client;
+use peer_client::{peer_client, ClientState};
 use torrent_data::TorrentData;
 
 pub enum DownloadState {
     Close
 }
+
+struct Peer {
+    id: PeerAddress,
+    channel: (Sender<ClientState>, Receiver<ClientState>)
+}
+
+const MAX_PEERS: usize = 20;
 
 pub fn download(filename: &str) -> (Sender<DownloadState>, Receiver<DownloadState>) {
     
@@ -64,7 +71,12 @@ pub fn download(filename: &str) -> (Sender<DownloadState>, Receiver<DownloadStat
                 Ok(TrackerState::Announced(peers)) => {
                     //println!("Acquired peers {:?}", peers);
                     for peer in &peers {
-                        active_peers.push(peer_client(&info, peer));
+                        if active_peers.len() < MAX_PEERS {
+                            active_peers.push(Peer {
+                                id: peer.clone(),
+                                channel: peer_client(&info, peer)
+                            });
+                        }
                     }
                 },
                 Err(_) => {}

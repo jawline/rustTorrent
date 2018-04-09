@@ -26,7 +26,7 @@ impl TorrentData {
         let zero_piece = zeros(piece_size);
 
         for _ in 0..pieces.len() {
-//            torrent_file.write(&zero_piece)?;
+            torrent_file.write(&zero_piece)?;
         }
 
         println!("Pre-allocated");
