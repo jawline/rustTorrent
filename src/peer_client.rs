@@ -140,8 +140,13 @@ fn unchoked(stream: &mut TcpStream) -> Result<(), io::Error> {
 const MAX_REQUEST_SIZE: usize = 16384;
 
 struct PeerClient { 
+
     send: Sender<ClientState>,
     recv: Receiver<ClientState>,
+
+    stream: TcpStream,
+
+    piece_length: usize,
 
     bitfield: Bitfield,
 
@@ -157,30 +162,114 @@ struct PeerClient {
     acquire_buffer: Vec<u8>
 }
 
+impl PeerClient {
+
+    pub fn sync_ctrl(&mut self) -> bool {
+        if let Ok(msg) = self.recv.try_recv() {
+            match msg { 
+                ClientState::Want(piece) => {
+                    self.acquiring_piece = piece;
+                    self.am_acquiring = true;
+                    self.am_needing = false;
+                    self.acquire_step = 0;
+                    true
+                },
+                ClientState::Close(reason) => {
+                    self.send.send(ClientState::Close(reason));
+                    false
+                },
+                _ => {
+                    self.send.send(ClientState::Close("ctrl error".to_string()));
+                    false
+                }
+            }
+        } else {
+            true
+        }
+    }
+
+    pub fn update_state(&mut self) {
+        if !self.am_choked && self.am_acquiring && !self.waiting_piece {
+            if self.acquire_step < self.piece_length {
+                request(&mut self.stream, self.acquiring_piece, self.acquire_step, MAX_REQUEST_SIZE, self.piece_length);
+                self.waiting_piece = true;
+            } else {
+                self.send.send(ClientState::Commit(self.acquiring_piece, self.acquire_buffer.clone()));
+                self.am_acquiring = false;
+            }
+        }
+
+        if !self.am_choked && !self.am_needing && !self.am_acquiring {
+            self.send.send(ClientState::Need(self.bitfield.clone()));
+            self.am_needing = true;
+        }
+    }
+
+    pub fn process_msg(&mut self, msg: GeneralMsg) -> bool {
+        match msg.action {
+            0 => /* Choke */ {
+                println!("Choked");
+                self.am_choked = true;
+                self.waiting_piece = false;
+            },
+            1 => /* Unchoked */ {
+                println!("Unchoked");
+                self.am_choked = false;
+            },
+            2 => /* Interested */ {
+                println!("Interested");
+                self.am_interested = true;
+            },
+            3 => /* Not Interested */ {
+                println!("Not Interested");
+                self.am_interested = false;
+            },
+            4 => /* Have */ {
+                let mut payload: &[u8] = &msg.payload;
+
+                if payload.len() == 4 {
+                    let piece = payload.read_u32::<BE>().unwrap();
+                    self.bitfield.set(piece as usize);
+                } else {
+                    println!("Have - Bad payload");
+                }
+            },
+            5 => /* Bitfield */ {
+                self.bitfield = Bitfield::new(msg.payload);
+                interested(&mut self.stream);
+                unchoked(&mut self.stream);
+            },
+            7 => /* Piece */ {
+                let mut payload: &[u8] = &msg.payload;
+                let index = payload.read_u32::<BE>().unwrap();
+                let begin = payload.read_u32::<BE>().unwrap() as usize;
+                let length = payload.len();
+                let mut buffer_lock = &mut self.acquire_buffer[begin..begin + length];
+                copy(&mut payload, &mut buffer_lock).unwrap();
+                self.acquire_step = begin + length;
+                self.waiting_piece = false;
+            },
+            8 => {
+                println!("Cancel Received");
+            },
+            255 => /* Keep Alive */ {},
+            _ => {
+                self.send.send(ClientState::Close(format!("Unhandled action {}", msg.action))).unwrap();
+                return false
+            }
+        };
+        
+        true
+    }
+
+}
+
 pub fn peer_client(torrent: &Info, peer: &PeerAddress) -> (Sender<ClientState>, Receiver<ClientState>) {
     let torrent = torrent.clone();
     let peer = peer.clone();
 
     let (thread_send, main_recv): (Sender<ClientState>, Receiver<ClientState>) = mpsc::channel();
     let (main_send, thread_recv): (Sender<ClientState>, Receiver<ClientState>) = mpsc::channel();
-
-    let mut client = PeerClient {
-        send: thread_send,
-        recv: thread_recv,
-
-        bitfield: Bitfield::new((0..torrent.pieces.len() / 8).map(|_| 0).collect()),
-
-        am_choked: true,
-        am_interested: false,
-
-        am_acquiring: false,
-        am_needing: false,
-
-        acquiring_piece: 0,
-        acquire_step: 0,
-        waiting_piece: false,
-        acquire_buffer: vec![0; torrent.piece_length]
-    };
 
     thread::spawn(move || {
         let mut client = TcpStream::connect((peer.ip, peer.port));
@@ -213,100 +302,42 @@ pub fn peer_client(torrent: &Info, peer: &PeerAddress) -> (Sender<ClientState>, 
             return;
         }
 
+        let mut client = PeerClient {
+            send: thread_send,
+            recv: thread_recv,
+
+            stream: client,
+            piece_length: torrent.piece_length,
+
+            bitfield: Bitfield::new((0..torrent.pieces.len() / 8).map(|_| 0).collect()),
+
+            am_choked: true,
+            am_interested: false,
+
+            am_acquiring: false,
+            am_needing: false,
+
+            acquiring_piece: 0,
+            acquire_step: 0,
+            waiting_piece: false,
+            acquire_buffer: vec![0; torrent.piece_length]
+        };
+
         loop {
 
-            if let Ok(msg) = thread_recv.try_recv() {
-                match msg { 
-                    ClientState::Want(piece) => {
-                        acquiring = piece;
-                        am_acquiring = true;
-                        am_needing = false;
-                        acquire_step = 0;
-                    },
-                    ClientState::Close(reason) => {
-                        thread_send.send(ClientState::Close(reason));
-                        return;
-                    },
-                    _ => {
-                        thread_send.send(ClientState::Close("ctrl error".to_string()));
-                        return;
-                    }
-                }
+            if !client.sync_ctrl() {
+                return;
             }
 
-            if !am_choked && am_acquiring && !waiting_piece {
-                if acquire_step < torrent.piece_length {
-                    request(&mut client, acquiring, acquire_step, MAX_REQUEST_SIZE, torrent.piece_length);
-                    waiting_piece = true;
-                } else {
-                    thread_send.send(ClientState::Commit(acquiring, acquire_buffer.clone()));
-                    am_acquiring = false;
-                }
-            }
+            client.update_state();            
 
-            if !am_choked && !am_needing && !am_acquiring {
-                thread_send.send(ClientState::Need(bitfield.clone()));
-                am_needing = true;
-            }
+            let next = GeneralMsg::recv(&mut client.stream);
 
-            let next = GeneralMsg::recv(&mut client);
-
-            if let Ok(msg) = next { 
-                match msg.action {
-                    0 => /* Choke */ {
-                        println!("Choked");
-                        am_choked = true;
-                        waiting_piece = false;
-                    },
-                    1 => /* Unchoked */ {
-                        println!("Unchoked");
-                        am_choked = false;
-                    },
-                    2 => /* Interested */ {
-                        println!("Interested");
-                        am_interested = true;
-                    },
-                    3 => /* Not Interested */ {
-                        println!("Not Interested");
-                        am_interested = false;
-                    },
-                    4 => /* Have */ {
-                        let mut payload: &[u8] = &msg.payload;
-
-                        if payload.len() == 4 {
-                            let piece = payload.read_u32::<BE>().unwrap();
-                            bitfield.set(piece as usize);
-                        } else {
-                            println!("Have - Bad payload");
-                        }
-                    },
-                    5 => /* Bitfield */ {
-                        bitfield = Bitfield::new(msg.payload);
-                        interested(&mut client);
-                        unchoked(&mut client);
-                    },
-                    7 => /* Piece */ {
-                        let mut payload: &[u8] = &msg.payload;
-                        let index = payload.read_u32::<BE>().unwrap();
-                        let begin = payload.read_u32::<BE>().unwrap() as usize;
-                        let length = payload.len();
-                        let mut buffer_lock = &mut acquire_buffer[begin..begin + length];
-                        copy(&mut payload, &mut buffer_lock).unwrap();
-                        acquire_step = begin + length;
-                        waiting_piece = false;
-                    },
-                    8 => {
-                        println!("Cancel Received");
-                    },
-                    255 => /* Keep Alive */ {},
-                    _ => {
-                        thread_send.send(ClientState::Close(format!("Unhandled action {}", msg.action))).unwrap();
-                        return;
-                    }
-                }
+            if let Ok(msg) = next {
+                 client.process_msg(msg);
             } else if let Err(e) = next {
                 if !(e.kind() == io::ErrorKind::WouldBlock || e.kind() == io::ErrorKind::TimedOut) {
-                    thread_send.send(ClientState::Close("we where EOF'd".to_string())).unwrap();
+                    client.send.send(ClientState::Close("we where EOF'd".to_string())).unwrap();
                     return;
                 }
             }
