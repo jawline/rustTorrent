@@ -173,8 +173,11 @@ pub fn peer_client(torrent: &Info, peer: &PeerAddress) -> (Sender<ClientState>, 
         am_choked: true,
         am_interested: false,
 
+        am_acquiring: false,
+        am_needing: false,
+
         acquiring_piece: 0,
-        acquirng_step: 0,
+        acquire_step: 0,
         waiting_piece: false,
         acquire_buffer: vec![0; torrent.piece_length]
     };
