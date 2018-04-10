@@ -1,3 +1,4 @@
+#[derive(Clone)]
 pub struct Bitfield {
     data: Vec<u8>
 }
@@ -19,12 +20,20 @@ impl Bitfield {
 
     pub fn get(&self, piece: usize) -> bool {
         let idx = Bitfield::chunk(piece);
-        let bit = Bitfield::bit(piece); 
-        let mask = (1 << (7 - bit));
-        println!("Idx: {} Bit: {} Field {} Has {}", idx, bit, mask, self.data[idx] & mask);
-        self.data[idx] & mask != 0
+
+        if idx >= self.data.len() {
+            false
+        } else {
+            let bit = Bitfield::bit(piece); 
+            let mask = 1 << (7 - bit);
+            self.data[idx] & mask != 0
+        }
     }
 
-    pub fn set(&self, piece: usize, have: bool) {
+    pub fn set(&mut self, piece: usize) {
+        let idx = Bitfield::chunk(piece);
+        let bit = Bitfield::bit(piece);
+        let mask = 1 << (7 - bit);
+        self.data[idx] = self.data[idx] | mask;
     }
 }

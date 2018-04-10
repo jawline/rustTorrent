@@ -20,6 +20,8 @@ mod urlencode;
 mod bitfield;
 
 use std::env;
+use std::thread;
+use std::time::Duration;
 
 pub fn main() {
     let (master_send, master_recv) = download::download(&env::args().nth(1).unwrap());
@@ -29,5 +31,6 @@ pub fn main() {
         if let Ok(download::DownloadState::Close) = master_data {
             break;
         }
+        thread::sleep(Duration::from_millis(500));
     }    
 }
