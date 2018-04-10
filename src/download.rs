@@ -1,4 +1,4 @@
-use torrent::{from_file, prepare};
+use torrent::{Info, from_file, prepare};
 use tracker::{TrackerState, PeerAddress, connect};
 use std::sync::mpsc::{Sender, Receiver};
 use std::sync::mpsc;
@@ -34,6 +34,110 @@ fn remaining(torrent_data: &TorrentData) -> usize {
 
 const MAX_PEERS: usize = 50;
 
+struct Download {
+
+    send: Sender<DownloadState>,
+    recv: Receiver<DownloadState>,
+
+    tracker: (Sender<TrackerState>, Receiver<TrackerState>),
+
+    info: Info,
+    data: TorrentData,
+
+    active_clients: Vec<Peer>
+}
+
+impl Download {
+    
+    pub fn shutdown(&mut self, reason: &str) {
+        println!("TODO: Shut Down because {}", reason);
+    }
+
+    pub fn sync_ctrl(&mut self) {
+        //Check if a control signal has been sent
+        let ctrl_data = self.recv.try_recv();
+            
+        if let Ok(DownloadState::Close) = ctrl_data {
+            self.shutdown("Requested");
+        }
+    }
+
+    pub fn sync_tracker(&mut self) {
+
+        //Update tracker information
+        let tracker_data = self.tracker.1.try_recv();
+
+        match tracker_data {
+            Ok(TrackerState::Close(v)) => {
+                self.shutdown("Tracker Closed");
+            },
+            Ok(TrackerState::Connected(cid)) => {
+                println!("Connected to the tracker with connection id {}", cid);
+            },
+            Ok(TrackerState::Announced(peers)) => {
+                //println!("Acquired peers {:?}", peers);
+                for peer in &peers {
+                    let mut active_peers = &mut self.active_clients;
+                    let can_add = active_peers.len() < MAX_PEERS;
+                    let already_have = active_peers.iter().any(|x| peer.ip == x.id.ip);
+                    if can_add && !already_have {
+                        active_peers.push(Peer {
+                            id: peer.clone(),
+                            locked: None,
+                            channel: peer_client(&self.info, peer)
+                        });
+                    }
+                }
+            },
+            Err(_) => {}
+        }
+    }
+
+    pub fn sync_clients(&mut self) {
+        //Update peer-wire client info
+        let mut closed = Vec::new();
+
+        //Read all signals from clients & process
+        for client_num in 0..self.active_clients.len() {
+            while let Ok(signal) = r_peer(&mut self.active_clients, client_num) {
+                match signal {
+                    ClientState::Close(reason) => {
+                        println!("Flagging {:?} for close due to {}", self.active_clients[client_num].id, reason);
+                        closed.push(client_num);
+                    },
+                    ClientState::Need(field) => { 
+                        let target = (0..self.data.pieces.len())
+                            .find(|&x| {
+                                //println!("Find {}", x);
+                                let i_have = self.data.have.get(x);
+                                let they_have = field.get(x);
+                                let is_unlocked = remaining(&self.data) < MAX_PEERS || !self.active_clients.iter().any(|cl| cl.locked == Some(x));
+                                !i_have && they_have && is_unlocked
+                            });
+
+                        if let Some(i) = target {
+                            self.active_clients[client_num].locked = Some(i);
+                            s_peer(&mut self.active_clients, client_num, ClientState::Want(i));
+                        } else {
+                            s_peer(&mut self.active_clients, client_num, ClientState::Close("Nothing of interest".to_string()));
+                        }
+                    },
+                    ClientState::Commit(piece, data) => {
+                        println!("{} / {} / {}", piece, self.data.pieces.len(), remaining(&self.data));
+                        self.data.write(piece, &data).unwrap();
+                    },
+                    _ => { println!("TODO: Error handler"); }
+                }       
+            }
+        }
+
+        //Back-to-front remove each index in vector (Preserves removal-index)
+        closed.iter().rev().for_each(|&i| {
+            self.active_clients.remove(i);
+        });
+    }
+}
+
 pub fn download(filename: &str) -> (Sender<DownloadState>, Receiver<DownloadState>) {
     
     let filename = filename.to_string();
@@ -60,98 +164,23 @@ pub fn download(filename: &str) -> (Sender<DownloadState>, Receiver<DownloadStat
         }
 
         let mut torrent_data = torrent_data.unwrap();
+        let mut tracker = connect(&info, peer_port, tracker_port);
 
-        let (tracker_send, tracker_recv) = connect(&info, peer_port, tracker_port);
-
-        let mut active_peers: Vec<Peer> = Vec::new();
+        let mut state = Download {
+            send: thread_send, 
+            recv: thread_recv,
+            tracker: tracker,
+            data: torrent_data,
+            info: info,
+            active_clients: Vec::new()
+        };
 
         loop {
 
-            //Check if a control signal has been sent
-            let ctrl_data = thread_recv.try_recv();
-            
-            if let Ok(DownloadState::Close) = ctrl_data {
-                tracker_send.send(TrackerState::Close("Requested".to_string()));
-            }
+            state.sync_ctrl();
+            state.sync_tracker();
+            state.sync_clients();
 
-            //Update peer-wire client info
-            let mut closed = Vec::new();
-
-            //Read all signals from clients & process
-            for client_num in 0..active_peers.len() {
-
-                loop {
-                    let client_data = r_peer(&mut active_peers, client_num);
-                    if let Ok(signal) = client_data {
-                        match signal {
-                            ClientState::Close(reason) => {
-                                println!("Flagging {:?} for close due to {}", active_peers[client_num].id, reason);
-                                closed.push(client_num);
-                            },
-                            ClientState::Need(field) => { 
-                                let target = (0..torrent_data.pieces.len())
-                                    .find(|&x| {
-                                        //println!("Find {}", x);
-                                        let i_have = torrent_data.have.get(x);
-                                        let they_have = field.get(x);
-                                        let is_unlocked = remaining(&torrent_data) < MAX_PEERS || !active_peers.iter().any(|cl| cl.locked == Some(x));
-                                        !i_have && they_have && is_unlocked
-                                    });
-
-                                if let Some(i) = target {
-                                    active_peers[client_num].locked = Some(i);
-                                    s_peer(&mut active_peers, client_num, ClientState::Want(i));
-                                } else {
-                                    s_peer(&mut active_peers, client_num, ClientState::Close("Nothing of interest".to_string()));
-                                }
-                            },
-                            ClientState::Commit(piece, data) => {
-                                println!("{} / {} / {}", piece, torrent_data.pieces.len(), remaining(&torrent_data));
-                                torrent_data.write(piece, &data).unwrap();
-                            },
-                            _ => { println!("TODO: Error handler"); }
-                        }
-                    } else { //No More Incoming Data
-                        break;
-                    } 
-                }           
-            }
-
-            //Back-to-front remove each index in vector (Preserves removal-index)
-            closed.iter().rev().for_each(|&i| {
-                println!("Remove {:?}", active_peers[i].id);
-                active_peers.remove(i);
-            });
-
-            //Update tracker information
-            let tracker_data = tracker_recv.try_recv();
-
-            match tracker_data {
-                Ok(TrackerState::Close(v)) => {
-                    println!("Design a way to trigger full shut down");
-                    println!("Closed because {}", v);
-                    thread_send.send(DownloadState::Close);
-                    break; 
-                },
-                Ok(TrackerState::Connected(cid)) => {
-                    println!("Connected to the tracker with connection id {}", cid);
-                },
-                Ok(TrackerState::Announced(peers)) => {
-                    //println!("Acquired peers {:?}", peers);
-                    for peer in &peers {
-                        let can_add = active_peers.len() < MAX_PEERS;
-                        let already_have = active_peers.iter().any(|x| peer.ip == x.id.ip);
-                        if can_add && !already_have {
-                            active_peers.push(Peer {
-                                id: peer.clone(),
-                                locked: None,
-                                channel: peer_client(&info, peer)
-                            });
-                        }
-                    }
-                },
-                Err(_) => {}
-            }
             thread::sleep(Duration::from_millis(150));
         } 
     });
