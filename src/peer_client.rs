@@ -6,6 +6,7 @@ use torrent::Info;
 use tracker::PeerAddress;
 use std::io;
 use std::io::{copy, Read, Write};
+use std::io::ErrorKind::{WouldBlock, TimedOut};
 use std::net::TcpStream;
 use std::thread;
 use std::time;
@@ -281,8 +282,8 @@ pub fn peer_client(torrent: &Info, peer: &PeerAddress) -> (Sender<ClientState>, 
 
         let mut client = client.unwrap();
 
-        client.set_read_timeout(Some(time::Duration::from_millis(500)));
-        client.set_write_timeout(Some(time::Duration::from_millis(500)));
+        client.set_read_timeout(Some(time::Duration::from_millis(5000)));
+        client.set_write_timeout(Some(time::Duration::from_millis(5000)));
        
         let handshake = HandshakeMsg {
             pstr: "BitTorrent protocol".to_string(),
@@ -301,6 +302,11 @@ pub fn peer_client(torrent: &Info, peer: &PeerAddress) -> (Sender<ClientState>, 
             thread_send.send(ClientState::Close(e.to_string()));
             return;
         }
+
+        
+
+        client.set_read_timeout(Some(time::Duration::from_millis(500)));
+        client.set_write_timeout(Some(time::Duration::from_millis(500)));
 
         let mut client = PeerClient {
             send: thread_send,
@@ -336,10 +342,13 @@ pub fn peer_client(torrent: &Info, peer: &PeerAddress) -> (Sender<ClientState>, 
             if let Ok(msg) = next {
                  client.process_msg(msg);
             } else if let Err(e) = next {
-                if !(e.kind() == io::ErrorKind::WouldBlock || e.kind() == io::ErrorKind::TimedOut) {
-                    client.send.send(ClientState::Close("we where EOF'd".to_string())).unwrap();
-                    return;
-                }
+                match e.kind() {
+                    WouldBlock | TimedOut => {},
+                    _ => {
+                        client.send.send(ClientState::Close(e.to_string())).unwrap();
+                        return;
+                    }
+                };
             }
         }
     });
