@@ -139,6 +139,24 @@ fn unchoked(stream: &mut TcpStream) -> Result<(), io::Error> {
 
 const MAX_REQUEST_SIZE: usize = 16384;
 
+struct PeerClient { 
+    send: Sender<ClientState>,
+    recv: Receiver<ClientState>,
+
+    bitfield: Bitfield,
+
+    am_choked: bool,
+    am_interested: bool,
+
+    am_needing: bool,
+
+    am_acquiring: bool,
+    acquiring_piece: usize,
+    acquire_step: usize,
+    waiting_piece: bool,
+    acquire_buffer: Vec<u8>
+}
+
 pub fn peer_client(torrent: &Info, peer: &PeerAddress) -> (Sender<ClientState>, Receiver<ClientState>) {
     let torrent = torrent.clone();
     let peer = peer.clone();
@@ -146,18 +164,20 @@ pub fn peer_client(torrent: &Info, peer: &PeerAddress) -> (Sender<ClientState>, 
     let (thread_send, main_recv): (Sender<ClientState>, Receiver<ClientState>) = mpsc::channel();
     let (main_send, thread_recv): (Sender<ClientState>, Receiver<ClientState>) = mpsc::channel();
 
-    let mut bitfield = Bitfield::new((0..torrent.pieces.len() / 8).map(|_| 0).collect());
+    let mut client = PeerClient {
+        send: thread_send,
+        recv: thread_recv,
 
-    let mut am_choked = true;
-    let mut am_interested = false;
+        bitfield: Bitfield::new((0..torrent.pieces.len() / 8).map(|_| 0).collect()),
 
-    let mut am_needing = false;
-    let mut am_acquiring = false;
+        am_choked: true,
+        am_interested: false,
 
-    let mut acquiring = 0;
-    let mut acquire_step = 0;
-    let mut waiting_piece = false;
-    let mut acquire_buffer = vec![0; torrent.piece_length];
+        acquiring_piece: 0,
+        acquirng_step: 0,
+        waiting_piece: false,
+        acquire_buffer: vec![0; torrent.piece_length]
+    };
 
     thread::spawn(move || {
         let mut client = TcpStream::connect((peer.ip, peer.port));

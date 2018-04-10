@@ -128,6 +128,7 @@ pub fn download(filename: &str) -> (Sender<DownloadState>, Receiver<DownloadStat
 
             match tracker_data {
                 Ok(TrackerState::Close(v)) => {
+                    println!("Design a way to trigger full shut down");
                     println!("Closed because {}", v);
                     thread_send.send(DownloadState::Close);
                     break; 
@@ -138,7 +139,9 @@ pub fn download(filename: &str) -> (Sender<DownloadState>, Receiver<DownloadStat
                 Ok(TrackerState::Announced(peers)) => {
                     //println!("Acquired peers {:?}", peers);
                     for peer in &peers {
-                        if active_peers.len() < MAX_PEERS {
+                        let can_add = active_peers.len() < MAX_PEERS;
+                        let already_have = active_peers.iter().any(|x| peer.ip == x.id.ip);
+                        if can_add && !already_have {
                             active_peers.push(Peer {
                                 id: peer.clone(),
                                 locked: None,
