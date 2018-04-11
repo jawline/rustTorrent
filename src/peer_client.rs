@@ -243,12 +243,14 @@ impl PeerClient {
             7 => /* Piece */ {
                 let mut payload: &[u8] = &msg.payload;
                 let index = payload.read_u32::<BE>().unwrap();
-                let begin = payload.read_u32::<BE>().unwrap() as usize;
-                let length = payload.len();
-                let mut buffer_lock = &mut self.acquire_buffer[begin..begin + length];
-                copy(&mut payload, &mut buffer_lock).unwrap();
-                self.acquire_step = begin + length;
-                self.waiting_piece = false;
+                if index as usize == self.acquiring_piece {
+                    let begin = payload.read_u32::<BE>().unwrap() as usize;
+                    let length = payload.len();
+                    let mut buffer_lock = &mut self.acquire_buffer[begin..begin + length];
+                    copy(&mut payload, &mut buffer_lock).unwrap();
+                    self.acquire_step = begin + length;
+                    self.waiting_piece = false;
+                }
             },
             8 => {
                 println!("Cancel Received");

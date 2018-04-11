@@ -3,7 +3,6 @@ use std::io::Read;
 use sha1;
 use bencoder::{Entry, EntryData, decode};
 use peer_id::gen_peer_id;
-use torrent_data::TorrentData;
 
 #[derive(Debug)]
 #[derive(Clone)]

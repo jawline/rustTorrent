@@ -1,4 +1,4 @@
-use std::net::{IpAddr, Ipv4Addr, UdpSocket};
+use std::net::IpAddr;
 
 pub enum TrackerState {
     Connected(u64),

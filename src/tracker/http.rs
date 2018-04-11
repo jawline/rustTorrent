@@ -43,7 +43,7 @@ pub fn http_tracker_do_announce(info: &Info, peer_port: u16) -> Result<bencoder:
 
             match info {
                 Ok(info) => Ok(info),
-                Err(v) => Err("Bencoder decode error".to_string())
+                Err(v) => Err(format!("Bencode err {:?}", v))
             }
         }
     } else {
@@ -77,7 +77,7 @@ pub fn http_tracker_extract_peers(peers: &bencoder::Entry, send: &Sender<Tracker
     send.send(TrackerState::Announced(extracted));
 }
 
-pub fn http_tracker(info: &Info, peer_port: u16, tracker_port: u16, send: Sender<TrackerState>, recv: Receiver<TrackerState>) {
+pub fn http_tracker(info: &Info, peer_port: u16, _: u16, send: Sender<TrackerState>, recv: Receiver<TrackerState>) {
 
     loop {
 
@@ -106,8 +106,6 @@ pub fn http_tracker(info: &Info, peer_port: u16, tracker_port: u16, send: Sender
         let interval = interval.unwrap();
 
         thread::sleep(time::Duration::from_millis(interval.as_usize().unwrap() as u64));
-    }
-    
-    send.send(TrackerState::Close("Broke HTTP Tracker".to_string()));
+    } 
 }
 
