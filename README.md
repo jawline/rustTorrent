@@ -14,3 +14,4 @@ A BitTorrent client implementation written in Rust.
 - Seeding (We don't send any info on our pieces)
 - Strategies
 - Metrics
+- DHT (Magnet links)
