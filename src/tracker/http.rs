@@ -3,12 +3,10 @@ use reqwest;
 use reqwest::header::ContentLength;
 use bencoder;
 use urlencode::urlencode;
-use byteorder::{BE, ReadBytesExt, WriteBytesExt};
-use std::net::{IpAddr, Ipv4Addr, UdpSocket};
+use byteorder::{BE, ReadBytesExt};
+use std::net::{IpAddr, Ipv4Addr};
 use std::sync::mpsc::{Sender, Receiver};
-use std::sync::mpsc;
 use std::{thread, time};
-use std::str;
 use tracker::{TrackerState, PeerAddress};
 use std::io::copy;
 

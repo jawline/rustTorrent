@@ -273,7 +273,7 @@ pub fn peer_client(torrent: &Info, peer: &PeerAddress) -> (Sender<ClientState>, 
     let (main_send, thread_recv): (Sender<ClientState>, Receiver<ClientState>) = mpsc::channel();
 
     thread::spawn(move || {
-        let mut client = TcpStream::connect((peer.ip, peer.port));
+        let client = TcpStream::connect((peer.ip, peer.port));
 
         if let Err(e) = client {
             thread_send.send(ClientState::Close(e.to_string()));

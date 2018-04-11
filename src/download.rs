@@ -3,8 +3,7 @@ use tracker::{TrackerState, PeerAddress, connect};
 use std::sync::mpsc::{Sender, Receiver};
 use std::sync::mpsc;
 use std::time::Duration;
-use std::{io, thread};
-use std::net::TcpListener;
+use std::thread;
 use peer_client::{peer_client, ClientState};
 use torrent_data::TorrentData;
 
@@ -59,7 +58,7 @@ impl Download {
 
         match tracker_data {
             Ok(TrackerState::Close(v)) => {
-                self.shutdown("Tracker Closed");
+                self.shutdown(&format!("Tracker Closed because {}", v));
             },
             Ok(TrackerState::Connected(cid)) => {
                 println!("Connected to the tracker with connection id {}", cid);

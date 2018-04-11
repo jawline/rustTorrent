@@ -1,12 +1,10 @@
 use torrent::Info;
-use url::{form_urlencoded, Url};
-use std::io::{copy, Read, Write};
+use std::io::Write;
+use url::Url;
 use byteorder::{BE, ReadBytesExt, WriteBytesExt};
 use std::net::{IpAddr, Ipv4Addr, UdpSocket};
 use std::sync::mpsc::{Sender, Receiver};
-use std::sync::mpsc;
 use std::{thread, time};
-use std::str;
 use tracker::{TrackerState, PeerAddress};
 
 /**
