@@ -7,6 +7,7 @@ use std::{io, thread};
 use std::net::TcpListener;
 use peer_client::{peer_client, ClientState};
 use torrent_data::TorrentData;
+use bitfield::Bitfield;
 
 pub enum DownloadState {
     Close
@@ -83,42 +84,58 @@ impl Download {
         }
     }
 
-    fn s_client(&mut self, id: usize, msg: ClientState) {
-        self.active_clients[id].channel.0.send(msg).unwrap();
+    fn flag_remove(id: usize, to_remove: &mut Vec<usize>) {
+        if !to_remove.iter().any(|&x| x == id) {
+            to_remove.push(id);
+        }
+    }
+
+    fn s_client(&mut self, id: usize, msg: ClientState, to_remove: &mut Vec<usize>) {
+        if self.active_clients[id].channel.0.send(msg).is_err() {
+            Download::flag_remove(id, to_remove);
+        }
     }
 
     fn r_client(&mut self, id: usize) -> Result<ClientState, mpsc::TryRecvError> {
         self.active_clients[id].channel.1.try_recv()
     }
 
+    /** Find a piece we don't have and they do have **/
+    fn find_needed_piece(&self, field: &Bitfield) -> Option<usize> {
+        (0..self.data.pieces.len())
+        .find(|&x| {
+            //println!("Find {}", x);
+            let i_have = self.data.have.get(x);
+            let they_have = field.get(x);
+            let is_unlocked = remaining(&self.data) < MAX_PEERS || !self.active_clients.iter().any(|cl| cl.locked == Some(x));
+            !i_have && they_have && is_unlocked
+        })
+    }
+
     fn process_client_msg(&mut self, id: usize, msg: ClientState, to_remove: &mut Vec<usize>) {
         match msg {
             ClientState::Close(reason) => {
                 println!("Flagging {:?} for close due to {}", self.active_clients[id].id, reason);
-                to_remove.push(id);
+                Download::flag_remove(id, to_remove);
             },
             ClientState::Need(field) => { 
-                let target = (0..self.data.pieces.len())
-                    .find(|&x| {
-                        //println!("Find {}", x);
-                        let i_have = self.data.have.get(x);
-                        let they_have = field.get(x);
-                        let is_unlocked = remaining(&self.data) < MAX_PEERS || !self.active_clients.iter().any(|cl| cl.locked == Some(x));
-                        !i_have && they_have && is_unlocked
-                    });
+                let target = self.find_needed_piece(&field); 
 
                 if let Some(i) = target {
                     self.active_clients[id].locked = Some(i);
-                    self.s_client(id, ClientState::Want(i));
+                    self.s_client(id, ClientState::Want(i), to_remove);
                 } else {
-                    self.s_client(id, ClientState::Close("Nothing of interest".to_string()));
+                    self.s_client(id, ClientState::Close("Nothing of interest".to_string()), to_remove);
                 }
             },
             ClientState::Commit(piece, data) => {
-                println!("{} / {} / {}", piece, self.data.pieces.len(), remaining(&self.data));
                 self.data.write(piece, &data).unwrap();
+                self.update_data_state();
             },
-            _ => { println!("TODO: Error handler"); }
+            _ => {
+                println!("Unexpected message from {:?}", self.active_clients[id].id);
+                self.s_client(id, ClientState::Close("Bad message".to_string()), to_remove);
+            }
         } 
     }
 
@@ -137,6 +154,14 @@ impl Download {
         closed.iter().rev().for_each(|&i| {
             self.active_clients.remove(i);
         });
+    }
+
+    fn update_data_state(&mut self) {
+        let total_pieces = self.data.pieces.len();
+        let remaining_pieces = remaining(&self.data);
+        let piece_length = self.data.piece_size;
+
+        println!("{}MB / {}MB", ((total_pieces - remaining_pieces) * piece_length) / 1024 / 1024, (total_pieces * piece_length) / 1024 / 1024);
     }
 }
 
